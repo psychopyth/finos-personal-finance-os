@@ -1,0 +1,4031 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>FinOS — Personal Finance OS</title>
+
+<!-- PWA -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#4f8ef7">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FinOS">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Sora:wght@400;600;700&display=swap');
+
+  :root {
+    --bg: #040507;
+    --bg2: #0a0b0e;
+    --bg3: #0f1015;
+    --surface: rgba(16,18,24,0.95);
+    --surface2: #16181f;
+    --border: rgba(255,255,255,0.06);
+    --border2: rgba(255,255,255,0.10);
+    --text: #e2e4ec;
+    --text2: #7a8099;
+    --text3: #484f6a;
+    --accent: #4f8ef7;
+    --accent2: #6c63ff;
+    --green: #22c55e;
+    --red: #ef4444;
+    --orange: #f97316;
+    --yellow: #eab308;
+    --purple: #a855f7;
+    --cyan: #06b6d4;
+    --pink: #ec4899;
+    --card-shadow: 0 2px 16px rgba(0,0,0,0.6);
+    --radius: 4px;
+    --radius-sm: 4px;
+    --font-head: 'Sora', sans-serif;
+    --font-body: 'Inter', sans-serif;
+  }
+
+  /* PWA safe area for iPhone notch */
+  .topbar {
+    padding-top: max(14px, env(safe-area-inset-top));
+    padding-left: max(28px, env(safe-area-inset-left));
+    padding-right: max(28px, env(safe-area-inset-right));
+  }
+  .sidebar {
+    padding-top: env(safe-area-inset-top);
+  }
+  body {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 14px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* LAYOUT */
+  .app { display: flex; min-height: 100vh; }
+
+  /* SIDEBAR */
+  .sidebar {
+    width: 240px;
+    min-height: 100vh;
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    z-index: 100;
+    transition: transform 0.3s;
+  }
+
+  .logo {
+    padding: 24px 20px 20px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+  }
+  .logo:hover h1 { opacity: 0.85; }
+  .logo h1 {
+    font-family: var(--font-head);
+    font-size: 22px;
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .logo span { font-size: 11px; color: var(--text3); display: block; margin-top: 2px; }
+
+  .nav { flex: 1; padding: 16px 12px; overflow-y: auto; }
+
+  .nav-section-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    color: var(--text3);
+    text-transform: uppercase;
+    padding: 12px 8px 6px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--text2);
+    font-size: 13.5px;
+    font-weight: 500;
+    margin-bottom: 2px;
+    transition: all 0.15s;
+    border: none; background: none; width: 100%; text-align: left;
+  }
+  .nav-item:hover { background: var(--surface); color: var(--text); }
+  .nav-item.active { background: linear-gradient(135deg, rgba(79,142,247,0.18), rgba(108,99,255,0.12)); color: var(--accent); }
+  .nav-item .icon { font-size: 16px; width: 20px; text-align: center; }
+
+  /* MAIN */
+  .main {
+    flex: 1;
+    margin-left: 240px;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* TOPBAR */
+  .topbar {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 28px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .topbar-title { font-family: var(--font-head); font-size: 18px; font-weight: 700; }
+  .topbar-right { display: flex; gap: 10px; align-items: center; }
+  .menu-btn { display: none; background: none; border: none; color: var(--text); font-size: 22px; cursor: pointer; }
+
+  /* CONTENT */
+  .content { padding: 24px 28px; flex: 1; }
+
+  /* PAGE */
+  .page { display: none; animation: fadeIn 0.2s ease; }
+  .page.active { display: block; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* CARDS GRID */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+  .stat-card:hover { border-color: var(--border2); }
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: var(--accent-color, linear-gradient(90deg, var(--accent), var(--accent2)));
+  }
+  .stat-card .label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 10px; }
+  .stat-card .value { font-family: var(--font-head); font-size: 24px; font-weight: 700; margin-bottom: 4px; }
+  .stat-card .sub { font-size: 11px; color: var(--text3); }
+  .stat-card .icon-bg {
+    position: absolute; right: 16px; top: 16px;
+    width: 36px; height: 36px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px;
+    background: var(--icon-bg, rgba(79,142,247,0.12));
+  }
+
+  /* GRID 2 */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+
+  /* PANEL */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .panel-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .panel-title { font-family: var(--font-head); font-size: 14px; font-weight: 700; }
+  .panel-body { padding: 16px 20px; }
+
+  /* QUICK ADD */
+  .quick-add-bar {
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 28px;
+  }
+  .quick-add-row { display: flex; gap: 10px; align-items: center; }
+  .quick-add-input {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-sm);
+    padding: 10px 16px;
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .quick-add-input:focus { border-color: var(--accent); }
+  .quick-add-input::placeholder { color: var(--text3); }
+  .quick-add-hint { font-size: 11px; color: var(--text3); margin-top: 6px; }
+  .quick-add-hint span { color: var(--accent); }
+
+  /* BUTTONS */
+  .btn {
+    padding: 9px 18px;
+    border-radius: var(--radius-sm);
+    border: none;
+    cursor: pointer;
+    font-family: var(--font-body);
+    font-size: 13px;
+    font-weight: 500;
+    transition: all 0.15s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .btn-primary { background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff; }
+  .btn-primary:hover { opacity: 0.9; transform: translateY(-1px); }
+  .btn-ghost { background: var(--surface2); color: var(--text2); border: 1px solid var(--border); }
+  .btn-ghost:hover { background: var(--surface); color: var(--text); }
+  .btn-danger { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.2); }
+  .btn-success { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.2); }
+  .btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 8px; }
+  .btn-icon { padding: 8px; border-radius: 8px; }
+
+  /* TRANSACTION LIST */
+  .tx-list { display: flex; flex-direction: column; gap: 0; }
+  .tx-item {
+    display: flex;
+    align-items: center;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--border);
+    gap: 14px;
+    cursor: pointer;
+    transition: background 0.1s;
+    border-radius: 8px;
+    padding-left: 10px; padding-right: 10px;
+  }
+  .tx-item:last-child { border-bottom: none; }
+  .tx-item:hover { background: var(--surface2); }
+
+  .tx-icon {
+    width: 38px; height: 38px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; flex-shrink: 0;
+    background: var(--surface2);
+  }
+  .tx-info { flex: 1; min-width: 0; }
+  .tx-merchant { font-weight: 500; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tx-meta { font-size: 11px; color: var(--text3); display: flex; gap: 8px; margin-top: 2px; flex-wrap: wrap; }
+  .tx-meta .tag {
+    background: var(--surface2);
+    border-radius: 4px; padding: 1px 6px;
+    font-size: 10px; color: var(--text2);
+  }
+  .tx-right { text-align: right; flex-shrink: 0; }
+  .tx-amount { font-family: var(--font-head); font-size: 15px; font-weight: 700; }
+  .tx-amount.debit { color: var(--red); }
+  .tx-amount.credit { color: var(--green); }
+  .tx-cashback { font-size: 10px; color: var(--green); }
+
+  /* BADGE */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .badge-blue { background: rgba(79,142,247,0.15); color: var(--accent); }
+  .badge-green { background: rgba(34,197,94,0.15); color: var(--green); }
+  .badge-red { background: rgba(239,68,68,0.15); color: var(--red); }
+  .badge-orange { background: rgba(249,115,22,0.15); color: var(--orange); }
+  .badge-purple { background: rgba(168,85,247,0.15); color: var(--purple); }
+  .badge-yellow { background: rgba(234,179,8,0.15); color: var(--yellow); }
+
+  /* CARD CHIP */
+  .card-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 500;
+    border: 1px solid var(--border2);
+  }
+
+  /* PROGRESS BAR */
+  .progress-bar { background: var(--surface2); border-radius: 20px; height: 6px; overflow: hidden; }
+  .progress-fill { height: 100%; border-radius: 20px; transition: width 0.5s ease; }
+
+  /* CREDIT CARD DISPLAY */
+  .cc-card {
+    background: linear-gradient(135deg, var(--c1, #1e2330), var(--c2, #252b3b));
+    border-radius: 6px;
+    padding: 22px;
+    position: relative;
+    overflow: hidden;
+    border: 1px solid var(--border2);
+    min-height: 160px;
+  }
+  .cc-card::after {
+    content: '';
+    position: absolute;
+    top: -30px; right: -30px;
+    width: 150px; height: 150px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.04);
+  }
+  .cc-card .cc-bank { font-size: 13px; font-weight: 700; opacity: 0.9; }
+  .cc-card .cc-name { font-family: var(--font-head); font-size: 17px; font-weight: 700; margin-top: 4px; }
+  .cc-card .cc-limit { position: absolute; bottom: 22px; left: 22px; }
+  .cc-card .cc-limit .l { font-size: 10px; opacity: 0.6; }
+  .cc-card .cc-limit .v { font-size: 16px; font-weight: 700; }
+  .cc-card .cc-util { position: absolute; bottom: 22px; right: 22px; text-align: right; }
+  .cc-card .cc-util .l { font-size: 10px; opacity: 0.6; }
+  .cc-card .cc-util .v { font-size: 16px; font-weight: 700; }
+
+  /* CHART */
+  .chart-wrap { position: relative; }
+  canvas { max-width: 100%; }
+
+  /* MODAL */
+  .modal-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    backdrop-filter: blur(12px);
+    z-index: 1000;
+    display: none;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    border-radius: 6px;
+    width: 540px;
+    max-width: 95vw;
+    max-height: 90vh;
+    overflow-y: auto;
+    animation: slideUp 0.25s ease;
+  }
+  @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+  .modal-header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .modal-title { font-family: var(--font-head); font-size: 16px; font-weight: 700; }
+  .modal-body { padding: 24px; }
+  .modal-footer { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+
+  /* FORM */
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .form-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .form-group label { font-size: 12px; color: var(--text2); font-weight: 500; }
+  .form-control {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-sm);
+    padding: 9px 13px;
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.2s;
+    width: 100%;
+  }
+  .form-control:focus { border-color: var(--accent); }
+  select.form-control option { background: var(--bg3); }
+
+  /* EMI CARD */
+  .emi-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 12px;
+  }
+  .emi-icon { font-size: 28px; }
+  .emi-info { flex: 1; }
+  .emi-name { font-weight: 600; font-size: 15px; }
+  .emi-meta { font-size: 12px; color: var(--text2); margin-top: 3px; }
+  .emi-right { text-align: right; }
+  .emi-amount { font-family: var(--font-head); font-size: 18px; font-weight: 700; color: var(--orange); }
+  .emi-remaining { font-size: 11px; color: var(--text3); }
+
+  /* INSIGHT */
+  .insight-item {
+    display: flex; align-items: flex-start; gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .insight-item:last-child { border-bottom: none; }
+  .insight-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+  .insight-text { font-size: 13px; color: var(--text2); line-height: 1.6; }
+  .insight-text strong { color: var(--text); }
+
+  /* SEARCH BAR */
+  .search-row { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .search-input {
+    flex: 1; min-width: 180px;
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-sm);
+    padding: 9px 14px 9px 36px;
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 13px;
+    outline: none;
+    position: relative;
+  }
+  .search-wrap { position: relative; flex: 1; min-width: 180px; }
+  .search-wrap::before { content: '🔍'; position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 13px; }
+  .search-wrap input { width: 100%; }
+  select.filter-select {
+    background: var(--surface);
+    border: 1px solid var(--border2);
+    border-radius: var(--radius-sm);
+    padding: 9px 12px;
+    color: var(--text2);
+    font-family: var(--font-body);
+    font-size: 12px;
+    outline: none;
+  }
+
+  /* TOAST */
+  .toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
+  .toast {
+    background: var(--surface2);
+    border: 1px solid var(--border2);
+    border-radius: 12px;
+    padding: 12px 18px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    animation: slideInRight 0.3s ease;
+    max-width: 300px;
+    box-shadow: var(--card-shadow);
+  }
+  @keyframes slideInRight { from { transform: translateX(100px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+  /* PILL TABS */
+  .tabs { display: flex; gap: 4px; background: var(--surface); border-radius: 12px; padding: 4px; margin-bottom: 20px; width: fit-content; }
+  .tab-btn {
+    padding: 7px 16px; border-radius: 9px; border: none;
+    background: none; color: var(--text2); cursor: pointer;
+    font-family: var(--font-body); font-size: 13px; font-weight: 500;
+    transition: all 0.15s;
+  }
+  .tab-btn.active { background: var(--surface2); color: var(--text); box-shadow: 0 1px 4px rgba(0,0,0,0.3); }
+
+  /* CAT BAR */
+  .cat-row { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .cat-label { font-size: 12px; width: 120px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cat-bar { flex: 1; }
+  .cat-amount { font-size: 12px; font-weight: 600; width: 70px; text-align: right; white-space: nowrap; }
+
+  /* MOBILE */
+  @media (max-width: 768px) {
+    .sidebar { transform: translateX(-100%); }
+    .sidebar.open { transform: translateX(0); }
+    .main { margin-left: 0; }
+    .menu-btn { display: block; }
+    .stats-grid { grid-template-columns: 1fr 1fr; }
+    .grid-2 { grid-template-columns: 1fr; }
+    .grid-3 { grid-template-columns: 1fr; }
+    .content { padding: 12px; }
+    .topbar { padding: 10px 14px; }
+    .quick-add-bar { padding: 10px 14px; }
+    .form-row { grid-template-columns: 1fr; }
+    .modal { border-radius: 4px; }
+    .modal-overlay { align-items: flex-end; }
+    .modal { width: 100% !important; max-width: 100% !important; border-radius: 16px 16px 0 0 !important; max-height: 92vh; animation: slideUpMobile 0.3s ease; }
+    @keyframes slideUpMobile { from { transform: translateY(100%); } to { transform: translateY(0); } }
+    .topbar-date { display: none; }
+    .topbar-emi-btn { display: none; }
+    .topbar-title { font-size: 16px; }
+    .search-row { flex-direction: column; gap: 8px; }
+    .search-row select.filter-select { width: 100%; }
+  }
+  @media (max-width: 480px) {
+    .stats-grid { grid-template-columns: 1fr 1fr; }
+    .stat-card .value { font-size: 20px; }
+  }
+  @media (max-width: 400px) {
+    .stats-grid { grid-template-columns: 1fr; }
+    .stat-card .value { font-size: 18px; }
+  }
+  @media (max-width: 480px) {
+    .quick-add-bar > div { flex-direction: column; }
+    .quick-add-bar .btn { width: 100%; justify-content: center; }
+  }
+
+  /* SCROLLBAR */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--surface2); border-radius: 10px; }
+
+  
+.quick-add-input, .form-control {
+  min-height: 46px;
+}
+
+.panel, .stat-card, .cc-card {
+  box-shadow: 0 10px 35px rgba(0,0,0,0.25);
+}
+
+.topbar {
+  backdrop-filter: blur(18px);
+}
+
+@media (max-width: 768px) {
+  /* tx-item uses row layout (defined in the PREMIUM MINIMAL block below) */
+
+  .cc-card {
+    min-height: 190px;
+  }
+
+  .panel-body {
+    padding: 14px;
+  }
+
+  .content {
+    padding: 12px;
+  }
+}
+
+
+/* MISC */
+  .section-title { font-family: var(--font-head); font-size: 15px; font-weight: 700; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+  .text-green { color: var(--green); }
+  .text-red { color: var(--red); }
+  .text-orange { color: var(--orange); }
+  .text-accent { color: var(--accent); }
+  .text-muted { color: var(--text3); }
+  .flex { display: flex; }
+  .items-center { align-items: center; }
+  .justify-between { justify-content: space-between; }
+  .gap-2 { gap: 8px; }
+  .mb-4 { margin-bottom: 16px; }
+  .mb-2 { margin-bottom: 8px; }
+  .mt-2 { margin-top: 8px; }
+  .w-full { width: 100%; }
+  .overlay-close {
+    position: fixed; inset: 0; z-index: 99; display: none;
+    background: rgba(0,0,0,0.3);
+  }
+  .overlay-close.open { display: block; }
+
+  .empty-state { text-align: center; padding: 40px 20px; color: var(--text3); }
+  .empty-state .icon { font-size: 40px; margin-bottom: 12px; }
+  .empty-state p { font-size: 13px; }
+
+  /* PREMIUM MINIMAL OVERRIDES */
+  .panel { border-radius: 4px !important; }
+  .panel-header { border-bottom: 1px solid var(--border); padding: 14px 18px; }
+  .panel-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; color: var(--text2); font-family: var(--font-body); }
+  .btn { border-radius: 4px; }
+  .badge { border-radius: 3px; }
+  .progress-bar { border-radius: 2px; }
+  .progress-fill { border-radius: 2px; }
+  .nav-item { border-radius: 4px; }
+  .tx-icon { border-radius: 4px; }
+  .logo h1 { font-size: 20px; letter-spacing: -0.02em; }
+  .sidebar { background: #060709; border-right: 1px solid var(--border); }
+  .topbar { background: #060709; border-bottom: 1px solid var(--border); }
+  .quick-add-bar { background: #060709; border-bottom: 1px solid var(--border); padding: 10px 28px; }
+  .stat-card .label { font-size: 10px; letter-spacing: 0.12em; }
+  .panel, .stat-card { box-shadow: none; backdrop-filter: none; }
+
+  /* Tx item mobile fix */
+  @media (max-width: 768px) {
+    .tx-item { flex-direction: row; align-items: center; }
+    .tx-right { text-align: right; }
+    .panel-body { padding: 12px 14px; }
+  }
+
+  .category-chip { border-radius: 3px; }
+  .card-chip { border-radius: 3px; }
+  .toast { border-radius: 4px; }
+  .emi-card { border-radius: 4px; }
+
+</style>
+</head>
+<body>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- REFUND MODAL -->
+<div class="modal-overlay" id="refundModal">
+  <div class="modal" style="width:460px;">
+    <div class="modal-header">
+      <span class="modal-title">↩️ Process Refund</span>
+      <button class="btn btn-ghost btn-icon" onclick="closeModal('refundModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="text-align:center;margin-bottom:18px;">
+        <div style="font-size:28px;margin-bottom:6px;">↩️</div>
+        <div style="font-family:var(--font-head);font-size:17px;font-weight:700;" id="refundModalMerchant">—</div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+        <div style="background:var(--surface2);border-radius:6px;padding:10px 12px;">
+          <div style="font-size:10px;color:var(--text3);margin-bottom:3px;">ORIGINAL AMOUNT</div>
+          <div style="font-size:15px;font-weight:700;color:var(--red);" id="refundOriginalAmt">—</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:6px;padding:10px 12px;">
+          <div style="font-size:10px;color:var(--text3);margin-bottom:3px;">CASHBACK EARNED</div>
+          <div style="font-size:15px;font-weight:700;color:var(--green);" id="refundOrigCashback">—</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:6px;padding:10px 12px;">
+          <div style="font-size:10px;color:var(--text3);margin-bottom:3px;">ALREADY REFUNDED</div>
+          <div style="font-size:15px;font-weight:700;color:var(--orange);" id="refundAlreadyRefunded">—</div>
+        </div>
+        <div style="background:var(--surface2);border-radius:6px;padding:10px 12px;">
+          <div style="font-size:10px;color:var(--text3);margin-bottom:3px;">MAX REFUNDABLE</div>
+          <div style="font-size:15px;font-weight:700;color:var(--accent);" id="refundMaxAmt">—</div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Refund Type</label>
+        <select class="form-control" id="refundType" onchange="onRefundTypeChange()">
+          <option value="full">Full Refund</option>
+          <option value="partial">Partial Refund</option>
+        </select>
+      </div>
+      <div class="form-group" id="refundPartialGroup" style="display:none;">
+        <label>Refund Amount (₹) *</label>
+        <input type="number" class="form-control" id="refundAmount" placeholder="0" min="1" oninput="updateRefundPreview()">
+      </div>
+      <div class="form-group">
+        <label>Refund Date</label>
+        <input type="date" class="form-control" id="refundDate">
+      </div>
+      <div style="background:rgba(34,197,94,0.07);border:1px solid rgba(34,197,94,0.2);border-radius:6px;padding:12px 14px;margin-top:4px;">
+        <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:10px;">Cashback Adjustment Preview</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;text-align:center;">
+          <div>
+            <div style="font-size:10px;color:var(--text3);margin-bottom:3px;">CB Lost</div>
+            <div style="font-size:14px;font-weight:700;color:var(--red);" id="refundCbLost">—</div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--text3);margin-bottom:3px;">Remaining CB</div>
+            <div style="font-size:14px;font-weight:700;color:var(--green);" id="refundCbPreview">—</div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--text3);margin-bottom:3px;">Net Amount</div>
+            <div style="font-size:14px;font-weight:700;color:var(--text);" id="refundNetPreview">—</div>
+          </div>
+        </div>
+        <div style="font-size:10px;color:var(--text3);margin-top:8px;text-align:center;">
+          CB = OrigCB × (RemainingAmount ÷ OriginalAmount)
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('refundModal')">Cancel</button>
+      <button class="btn btn-success" onclick="saveRefund()">↩️ Save Refund</button>
+    </div>
+  </div>
+</div>
+
+<!-- SIDEBAR OVERLAY -->
+<div class="overlay-close" id="sidebarOverlay" onclick="closeSidebar()"></div>
+
+<div class="app">
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="logo" onclick="navigate('dashboard')">
+      <h1>FinOS</h1>
+      <span>Personal Finance OS</span>
+    </div>
+    <nav class="nav" id="mainNav">
+      <div class="nav-section-label">Main</div>
+      <button class="nav-item active" data-page="dashboard">
+        <span class="icon">📊</span> Dashboard
+      </button>
+      <button class="nav-item" data-page="transactions">
+        <span class="icon">💳</span> Transactions
+      </button>
+      
+
+      <div class="nav-section-label">Finance</div>
+      <button class="nav-item" data-page="cards">
+        <span class="icon">🪪</span> Credit Cards
+      </button>
+      <button class="nav-item" data-page="emis">
+        <span class="icon">📅</span> EMI Tracker
+      </button>
+      <button class="nav-item" data-page="cashback">
+        <span class="icon">💰</span> Cashback
+      </button>
+
+      <div class="nav-section-label">Tools</div>
+      <button class="nav-item" data-page="fixedspends">
+        <span class="icon">📌</span> Fixed Spends
+      </button>
+      <button class="nav-item" data-page="budgets">
+        <span class="icon">🎯</span> Budgets
+      </button>
+      <button class="nav-item" data-page="settings">
+        <span class="icon">⚙️</span> Settings
+      </button>
+    </nav>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <!-- TOPBAR -->
+    <div class="topbar">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <button class="menu-btn" onclick="toggleSidebar()">☰</button>
+        <span class="topbar-title" id="pageTitle">Dashboard</span>
+      </div>
+      <div class="topbar-right">
+        <span id="topbarDate" class="topbar-date" style="font-size:11px;color:var(--text3);font-weight:500;"></span>
+        <button class="btn btn-ghost btn-sm topbar-emi-btn" onclick="openQuickEmiPurchase()">💳 Buy on EMI</button>
+        <button class="btn btn-primary btn-sm" onclick="openAddModal()">+ Add</button>
+      </div>
+    </div>
+
+    <!-- QUICK ADD -->
+    <div class="quick-add-bar">
+      <div class="quick-add-row">
+        <input class="quick-add-input" id="quickInput" placeholder='Type: "500 amazon sbi" or "refund 200 zomato hdfc"' onkeydown="if(event.key==='Enter')processQuickAdd()">
+        <button class="btn btn-primary" onclick="processQuickAdd()">⚡ Smart Add</button>
+      </div>
+      <div class="quick-add-hint" id="smartPreview">
+        Try: <span>500 blinkit sbi</span> · <span>refund 200 amazon</span> · <span>149 spotify hdfc emi</span>
+      </div>
+    </div>
+
+    <!-- CONTENT PAGES -->
+    <div class="content">
+
+      <!-- DASHBOARD -->
+      <div class="page active" id="page-dashboard">
+        <div class="stats-grid" id="dashStats"></div>
+        <div class="panel" style="margin-bottom:16px;">
+          <div class="panel-header">
+            <span class="panel-title">Recent Transactions</span>
+          </div>
+          <div id="recentTxList"></div>
+        </div>
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">Category Breakdown</span>
+            </div>
+            <div class="panel-body" id="catBreakdown"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">Card Utilization</span>
+            </div>
+            <div class="panel-body" id="cardUtil"></div>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">Upcoming Payments</span>
+              <button class="btn btn-ghost btn-sm" onclick="navigate('cards')">View All →</button>
+            </div>
+            <div class="panel-body" id="upcomingPayments"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">Subscription Tracker</span>
+            </div>
+            <div class="panel-body" id="subscriptionTracker"></div>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">Active EMIs</span>
+              <button class="btn btn-ghost btn-sm" onclick="navigate('emis')">View All →</button>
+            </div>
+            <div class="panel-body" id="dashEmiList"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-header">
+              <span class="panel-title">Fixed Spends</span>
+              <button class="btn btn-ghost btn-sm" onclick="navigate('fixedspends')">View All →</button>
+            </div>
+            <div class="panel-body" id="dashFixedSpends"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TRANSACTIONS -->
+      <div class="page" id="page-transactions">
+        <div class="search-row">
+          <div class="search-wrap">
+            <input type="text" class="search-input" id="txSearch" placeholder="Search transactions..." oninput="renderTransactions()">
+          </div>
+          <select class="filter-select" id="txFilterCat" onchange="renderTransactions()">
+            <option value="">All Categories</option>
+          </select>
+          <select class="filter-select" id="txFilterCard" onchange="renderTransactions()">
+            <option value="">All Cards</option>
+          </select>
+          <select class="filter-select" id="txFilterType" onchange="renderTransactions()">
+            <option value="">All Types</option>
+            <option value="expense">Expenses</option>
+            <option value="refund">Refunds</option>
+            <option value="emi-payment">EMI Payments</option>
+          </select>
+          <select class="filter-select" id="txFilterMonth" onchange="renderTransactions()">
+            <option value="">All Months</option>
+          </select>
+        </div>
+        <div class="panel">
+          <div class="panel-header">
+            <span class="panel-title" id="txCountLabel">Transactions</span>
+            <div style="display:flex;gap:8px;">
+              <button class="btn btn-ghost btn-sm" onclick="exportCSV()">📥 CSV</button>
+              <button class="btn btn-ghost btn-sm" onclick="exportJSON()">📦 Backup</button>
+            </div>
+          </div>
+          <div class="panel-body" id="txListContainer">
+            <div class="tx-list" id="txList"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CARDS -->
+      <div class="page" id="page-cards">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
+          <button class="btn btn-primary" onclick="openCardModal()">+ Add Card</button>
+        </div>
+        <div id="cardsGrid" class="grid-2"></div>
+      </div>
+
+      <!-- EMIS -->
+      <div class="page" id="page-emis">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
+          <button class="btn btn-primary" onclick="openEmiModal()">+ Add EMI</button>
+        </div>
+        <div class="grid-2" style="margin-bottom:20px;">
+          <div class="stat-card" style="--accent-color:var(--orange);">
+            <div class="label">Total Monthly EMI</div>
+            <div class="value text-orange" id="totalEmiAmt">₹0</div>
+            <div class="sub" id="totalEmiSub"></div>
+          </div>
+          <div class="stat-card" style="--accent-color:var(--purple);">
+            <div class="label">Total Remaining</div>
+            <div class="value" id="totalEmiRemaining">₹0</div>
+          </div>
+        </div>
+        <div class="section-title">Active EMIs</div>
+        <div id="emiList"></div>
+        <div class="section-title mt-2">Completed EMIs</div>
+        <div id="emiCompleted"></div>
+      </div>
+
+      <!-- CASHBACK -->
+      <div class="page" id="page-cashback">
+        <div class="stats-grid" id="cashbackStats"></div>
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">Cashback by Card</span></div>
+            <div class="panel-body" id="cashbackByCard"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">Top Cashback Merchants</span></div>
+            <div class="panel-body" id="cashbackByMerchant"></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><span class="panel-title">Cashback Transactions</span></div>
+          <div class="panel-body" id="cashbackTxList"></div>
+        </div>
+      </div>
+
+      <!-- BUDGETS -->
+      <div class="page" id="page-budgets">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
+          <button class="btn btn-primary" onclick="openBudgetModal()">+ Set Budget</button>
+        </div>
+        <div id="budgetList"></div>
+      </div>
+
+      <!-- FIXED SPENDS -->
+      <div class="page" id="page-fixedspends">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+          <div>
+            <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:4px;">Monthly Fixed Expenses</div>
+            <div id="fixedSpendsTotal" style="font-family:var(--font-head);font-size:22px;font-weight:700;color:var(--orange);">₹0</div>
+          </div>
+          <button class="btn btn-primary" onclick="openFixedSpendModal()">+ Add Fixed Spend</button>
+        </div>
+        <div id="fixedSpendsList"></div>
+      </div>
+
+      <!-- SETTINGS -->
+      <div class="page" id="page-settings">
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">Cashback Rules</span></div>
+            <div class="panel-body" id="cashbackRules"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><span class="panel-title">Merchant Mapping</span></div>
+            <div class="panel-body" id="merchantMapping"></div>
+          </div>
+        </div>
+        <div class="panel" style="margin-top:20px;">
+          <div class="panel-header"><span class="panel-title">Data Management</span></div>
+          <div class="panel-body" style="display:flex;gap:12px;flex-wrap:wrap;">
+            <button class="btn btn-ghost" onclick="exportJSON()">📦 Export Backup</button>
+            <button class="btn btn-ghost" onclick="importBackup()">📂 Import Backup</button>
+            <button class="btn btn-ghost" onclick="exportCSV()">📥 Export CSV</button>
+            <button class="btn btn-danger" onclick="resetAllData()">🗑️ Reset All Data</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /content -->
+  </div><!-- /main -->
+</div><!-- /app -->
+
+<!-- FIXED SPEND MODAL -->
+<div class="modal-overlay" id="fixedSpendModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="fixedSpendModalTitle">Add Fixed Spend</span>
+      <button class="btn btn-ghost btn-icon" onclick="closeModal('fixedSpendModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Name *</label>
+          <input type="text" class="form-control" id="fsName" placeholder="Rent, Netflix, Gym...">
+        </div>
+        <div class="form-group">
+          <label>Amount (₹) *</label>
+          <input type="number" class="form-control" id="fsAmount" placeholder="0">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Category</label>
+          <select class="form-control" id="fsCategory"></select>
+        </div>
+        <div class="form-group">
+          <label>Due Date (Day of Month)</label>
+          <input type="number" class="form-control" id="fsDueDay" placeholder="1" min="1" max="31">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Payment Mode</label>
+          <select class="form-control" id="fsCard">
+            <option value="">UPI</option>
+            <option value="cash">Cash</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Notes</label>
+          <input type="text" class="form-control" id="fsNotes" placeholder="Optional...">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('fixedSpendModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveFixedSpend()">Save</button>
+    </div>
+  </div>
+</div>
+
+
+<div class="modal-overlay" id="addModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="addModalTitle">Add Transaction</span>
+      <button class="btn btn-ghost btn-icon" onclick="closeModal('addModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="suggestionBanner" style="display:none;background:rgba(79,142,247,0.1);border:1px solid rgba(79,142,247,0.3);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:var(--accent);"></div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Amount (₹) *</label>
+          <input type="number" class="form-control" id="fAmount" placeholder="0" oninput="updateSuggestion()">
+        </div>
+        <div class="form-group">
+          <label>Merchant / Description *</label>
+          <input type="text" class="form-control" id="fMerchant" placeholder="Amazon, Blinkit..." oninput="autoDetectCategory()">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Category</label>
+          <select class="form-control" id="fCategory"></select>
+        </div>
+        <div class="form-group">
+          <label>Date</label>
+          <input type="date" class="form-control" id="fDate">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Payment Mode</label>
+          <select class="form-control" id="fCard" onchange="updateSuggestion()">
+            <option value="UPI">UPI</option>
+            <option value="Cash">Cash</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Type</label>
+          <select class="form-control" id="fType">
+            <option value="expense">Expense</option>
+            <option value="refund">Refund</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Cashback %</label>
+          <input type="number" class="form-control" id="fCashbackPct" placeholder="0" step="0.1" min="0" max="100">
+        </div>
+        <div class="form-group">
+          <label>Tags (comma separated)</label>
+          <input type="text" class="form-control" id="fTags" placeholder="online, food, work">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Notes</label>
+        <input type="text" class="form-control" id="fNotes" placeholder="Optional notes...">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('addModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveTransaction()">Save Transaction</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADD EMI MODAL -->
+<div class="modal-overlay" id="emiModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Add EMI</span>
+      <button class="btn btn-ghost btn-icon" onclick="closeModal('emiModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Item Name *</label>
+          <input type="text" class="form-control" id="eName" placeholder="AC, Laptop...">
+        </div>
+        <div class="form-group">
+          <label>Monthly EMI (₹) *</label>
+          <input type="number" class="form-control" id="eAmount" placeholder="0">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Total Tenure (months)</label>
+          <input type="number" class="form-control" id="eTenure" placeholder="6">
+        </div>
+        <div class="form-group">
+          <label>Remaining Months</label>
+          <input type="number" class="form-control" id="eRemaining" placeholder="3">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Linked Card</label>
+          <select class="form-control" id="eCard"></select>
+        </div>
+        <div class="form-group">
+          <label>Start Date</label>
+          <input type="date" class="form-control" id="eStart">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('emiModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveEmi()">Save EMI</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADD CARD MODAL -->
+<div class="modal-overlay" id="cardModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Add Credit Card</span>
+      <button class="btn btn-ghost btn-icon" onclick="closeModal('cardModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Bank Name *</label>
+          <input type="text" class="form-control" id="cBank" placeholder="HDFC, SBI...">
+        </div>
+        <div class="form-group">
+          <label>Card Name *</label>
+          <input type="text" class="form-control" id="cName" placeholder="MoneyBack, Cashback...">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Last 4 Digits</label>
+          <input type="text" class="form-control" id="cLast4" placeholder="4411" maxlength="4">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Credit Limit (₹)</label>
+          <input type="number" class="form-control" id="cLimit" placeholder="100000">
+        </div>
+        <div class="form-group">
+          <label>Bill Date (Day)</label>
+          <input type="number" class="form-control" id="cBillDate" placeholder="17" min="1" max="31">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Due Date (Day)</label>
+          <input type="number" class="form-control" id="cDueDate" placeholder="7" min="1" max="31">
+        </div>
+        <div class="form-group">
+          <label>Reward Points</label>
+          <input type="number" class="form-control" id="cPoints" placeholder="0">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Default Cashback % (Offline)</label>
+          <input type="number" class="form-control" id="cCashback" placeholder="0" step="0.1">
+        </div>
+        <div class="form-group">
+          <label>Online Cashback %</label>
+          <input type="number" class="form-control" id="cOnlineCashback" placeholder="0" step="0.1">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Min Due % (of statement)</label>
+          <input type="number" class="form-control" id="cMinDuePct" placeholder="5" step="0.1" min="1" max="100">
+        </div>
+        <div class="form-group">
+          <label>Interest Rate (APR %)</label>
+          <input type="number" class="form-control" id="cApr" placeholder="42" step="0.1" min="0" max="100">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Due Date Weekend Rule</label>
+        <select class="form-control" id="cWeekendRollover">
+          <option value="none">No adjustment</option>
+          <option value="next_business_day">Push to next business day</option>
+          <option value="prev_business_day">Pull to previous business day</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Auto-Pay Bill</label>
+          <select class="form-control" id="cAutoPay" onchange="document.getElementById('cAutoPayAmountGroup').style.display=this.value==='fixed'?'block':'none';">
+            <option value="none">Off (manual)</option>
+            <option value="min">Min Due</option>
+            <option value="full">Full Statement</option>
+            <option value="fixed">Fixed Amount</option>
+          </select>
+        </div>
+        <div class="form-group" id="cAutoPayAmountGroup" style="display:none;">
+          <label>Fixed Amount (₹)</label>
+          <input type="number" class="form-control" id="cAutoPayAmount" placeholder="0">
+        </div>
+      </div>
+      <div class="form-group">
+          <label>Card Color</label>
+          <select class="form-control" id="cColor">
+            <option value="blue">#2563eb to #4f46e5</option>
+            <option value="green">#059669 to #0891b2</option>
+            <option value="red">#dc2626 to #9333ea</option>
+            <option value="gold">#d97706 to #b45309</option>
+            <option value="dark">#1e293b to #0f172a</option>
+          </select>
+        </div>
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px;color:var(--text);">
+          <input type="checkbox" id="cCashbackToCard" style="width:16px;height:16px;accent-color:var(--green);flex-shrink:0;">
+          <span>Cashback statement mein credit hota hai (jaise SBI Cashback Card)</span>
+        </label>
+        <div style="font-size:11px;color:var(--text3);margin-top:4px;margin-left:26px;">Agar selected hai to upcoming payment mein cashback automatically minus ho jayega</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('cardModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveCard()">Save Card</button>
+    </div>
+  </div>
+</div>
+
+<!-- PAY BILL MODAL -->
+<div class="modal-overlay" id="payBillModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Pay Card Bill — <span id="pbCardLabel"></span></span>
+      <button class="btn btn-ghost btn-icon" onclick="closeModal('payBillModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="pbCardId">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px;">
+        <div><div style="font-size:10px;color:var(--text3);">Min Due</div><div id="pbMinDue" style="font-size:14px;font-weight:700;">₹0</div></div>
+        <div><div style="font-size:10px;color:var(--text3);">Statement Amt</div><div id="pbStatementAmt" style="font-size:14px;font-weight:700;">₹0</div></div>
+        <div><div style="font-size:10px;color:var(--text3);">Total Outstanding</div><div id="pbTotalOutstanding" style="font-size:14px;font-weight:700;">₹0</div></div>
+      </div>
+      <div class="form-group">
+        <label>Amount to Pay</label>
+        <input type="number" class="form-control" id="pbAmount" placeholder="0">
+      </div>
+      <div style="display:flex;gap:6px;">
+        <button class="btn btn-ghost btn-sm" onclick="fillPayBillAmount('min')">Min Due</button>
+        <button class="btn btn-ghost btn-sm" onclick="fillPayBillAmount('statement')">Statement Amt</button>
+        <button class="btn btn-ghost btn-sm" onclick="fillPayBillAmount('total')">Total Outstanding</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('payBillModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitPayBill()">Pay</button>
+    </div>
+  </div>
+</div>
+
+<!-- STATEMENT HISTORY MODAL -->
+<div class="modal-overlay" id="statementHistoryModal">
+  <div class="modal" style="max-width:640px;">
+    <div class="modal-header">
+      <span class="modal-title">Statement History — <span id="histCardLabel"></span></span>
+      <button class="btn btn-ghost btn-icon" onclick="closeModal('statementHistoryModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead>
+          <tr style="text-align:left;color:var(--text3);font-size:10px;text-transform:uppercase;">
+            <th style="padding:6px;">Period</th><th style="padding:6px;">Statement</th>
+            <th style="padding:6px;">Paid</th><th style="padding:6px;">Remaining</th>
+            <th style="padding:6px;">Interest</th>
+            <th style="padding:6px;">Due</th><th style="padding:6px;">Status</th>
+          </tr>
+        </thead>
+        <tbody id="histBody"></tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('statementHistoryModal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- UNBILLED TRANSACTIONS MODAL -->
+<div class="modal-overlay" id="unbilledModal">
+  <div class="modal" style="max-width:560px;">
+    <div class="modal-header">
+      <span class="modal-title">Unbilled Transactions — <span id="unbilledCardLabel"></span></span>
+      <button class="btn btn-ghost btn-icon" onclick="closeModal('unbilledModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="unbilledWindow" class="text-muted" style="font-size:11px;color:var(--text3);margin-bottom:10px;"></div>
+      <div id="unbilledList"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('unbilledModal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- BUDGET MODAL -->
+<div class="modal-overlay" id="budgetModal">
+  <div class="modal" style="max-width:400px;">
+    <div class="modal-header">
+      <span class="modal-title">Set Budget</span>
+      <button class="btn btn-ghost btn-icon" onclick="closeModal('budgetModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>Category</label>
+        <select class="form-control" id="bCategory"></select>
+      </div>
+      <div class="form-group">
+        <label>Monthly Limit (₹)</label>
+        <input type="number" class="form-control" id="bAmount" placeholder="5000">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('budgetModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveBudget()">Save Budget</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- QUICK EMI PURCHASE MODAL -->
+<div class="modal-overlay" id="quickEmiModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title">Buy Product on EMI</span>
+      <button class="btn btn-ghost btn-icon" onclick="closeModal('quickEmiModal')">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Product Name</label>
+          <input type="text" class="form-control" id="qeProduct" placeholder="iPhone, AC, Laptop">
+        </div>
+
+        <div class="form-group">
+          <label>Total Product Price</label>
+          <input type="number" class="form-control" id="qePrice" placeholder="50000">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Monthly EMI</label>
+          <input type="number" class="form-control" id="qeMonthly" placeholder="5000">
+        </div>
+
+        <div class="form-group">
+          <label>Total Months</label>
+          <input type="number" class="form-control" id="qeMonths" placeholder="12">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group">
+          <label>Credit Card Used</label>
+          <select class="form-control" id="qeCard"></select>
+        </div>
+
+        <div class="form-group">
+          <label>Purchase Date</label>
+          <input type="date" class="form-control" id="qeDate">
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('quickEmiModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveQuickEmiPurchase()">Save EMI Purchase</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- TX DETAIL MODAL -->
+<div class="modal-overlay" id="txDetailModal">
+  <div class="modal" style="max-width:460px;">
+    <div class="modal-header">
+      <span class="modal-title">Transaction Details</span>
+      <button class="btn btn-ghost btn-icon" onclick="closeModal('txDetailModal')">✕</button>
+    </div>
+    <div class="modal-body" id="txDetailBody"></div>
+    <div class="modal-footer" id="txDetailFooter"></div>
+  </div>
+</div>
+
+
+<div id="welcomeSplash" style="position:fixed;inset:0;background:#06070a;display:flex;align-items:center;justify-content:center;z-index:99999;flex-direction:column;"><div style="font-family:Sora,sans-serif;font-size:42px;font-weight:800;background:linear-gradient(135deg,#4f8ef7,#6c63ff);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">FinOS</div><div style="margin-top:10px;color:#8b91a8;font-size:14px;">Personal Finance OS</div></div>
+
+<input type="file" id="importFile" accept=".json" style="display:none" onchange="handleImport(event)">
+
+<script>
+// ============================================================
+// DATA STORE
+// ============================================================
+const STORAGE_KEY = 'finos_data';
+
+// Storage version migration (safe — does NOT delete user data)
+try {
+  const existing = localStorage.getItem(STORAGE_KEY);
+  if (existing) {
+    const parsed = JSON.parse(existing);
+    // Future migrations can go here without touching user data
+    console.log('FinOS storage loaded:', (parsed.transactions||[]).length, 'transactions');
+  }
+} catch(e) {
+  console.log('Storage check skipped');
+}
+
+
+const CARD_COLORS = {
+  blue: ['#2563eb','#4f46e5'],
+  green: ['#059669','#0891b2'],
+  red: ['#dc2626','#9333ea'],
+  gold: ['#d97706','#b45309'],
+  dark: ['#1e293b','#0f172a']
+};
+
+const DEFAULT_CARDS = [
+  { id:'hdfc_moneyback', bank:'HDFC', name:'MoneyBack', limit:92000, billDate:17, dueDate:7, points:5864, cashbackPct: 0, onlineCashbackPct: 0, color:'blue', outstanding:0, cashbackToCard: false },
+  { id:'hdfc_rupay', bank:'HDFC', name:'RuPay', limit:50000, billDate:17, dueDate:7, points:0, cashbackPct: 0, onlineCashbackPct: 0, color:'dark', outstanding:0, cashbackToCard: false },
+  { id:'icici_platinum', bank:'ICICI', name:'Platinum', limit:100000, billDate:17, dueDate:7, points:0, cashbackPct: 0, onlineCashbackPct: 0, color:'gold', outstanding:0, cashbackToCard: false },
+  { id:'sbi_cashback', bank:'SBI', name:'Cashback Card', limit:100000, billDate:5, dueDate:25, points:0, cashbackPct: 0, onlineCashbackPct: 0, color:'green', outstanding:0, cashbackToCard: true }
+];
+
+const DEFAULT_EMIS = [];
+
+const CATEGORIES = {
+  'Household': ['Dairy','Vegetables & Fruits','Grocery','Kitchen','Home Essentials'],
+  'Lifestyle': ['Shopping','Clothing','Electronics'],
+  'Health': ['Gym','Medicine','Supplements'],
+  'Transport': ['Fuel','Toll','Parking','Cab'],
+  'Learning': ['Courses','AI Tools','Software','Office'],
+  'Entertainment': ['OTT','Games','Movies','Subscription'],
+  'Financial': ['EMI','Insurance','Investments','Credit Card Payment'],
+  'Miscellaneous': ['Other']
+};
+
+const ALL_CATEGORIES = Object.entries(CATEGORIES).flatMap(([g,subs]) => subs.map(s => `${g} > ${s}`));
+
+// Merchant → Category auto-mapping
+const MERCHANT_MAP = {
+  amazon:'Lifestyle > Shopping', flipkart:'Lifestyle > Shopping', myntra:'Lifestyle > Shopping',
+  ajio:'Lifestyle > Shopping', meesho:'Lifestyle > Shopping', nykaa:'Lifestyle > Shopping',
+  blinkit:'Household > Grocery', zepto:'Household > Grocery', instamart:'Household > Grocery',
+  bigbasket:'Household > Grocery', dmart:'Household > Grocery', jiomart:'Household > Grocery',
+  milk:'Household > Dairy', dairy:'Household > Dairy', curd:'Household > Dairy',
+  paneer:'Household > Dairy', butter:'Household > Dairy', amul:'Household > Dairy',
+  vegetables:'Household > Vegetables & Fruits', fruits:'Household > Vegetables & Fruits',
+  zomato:'Household > Grocery', swiggy:'Household > Grocery', dominos:'Household > Grocery',
+  mcdonald:'Household > Grocery', kfc:'Household > Grocery',
+  petrol:'Transport > Fuel', diesel:'Transport > Fuel', fuel:'Transport > Fuel',
+  hp:'Transport > Fuel', iocl:'Transport > Fuel', bpcl:'Transport > Fuel', shell:'Transport > Fuel',
+  fastag:'Transport > Toll', toll:'Transport > Toll',
+  uber:'Transport > Cab', ola:'Transport > Cab', rapido:'Transport > Cab',
+  spotify:'Entertainment > Subscription', netflix:'Entertainment > OTT',
+  hotstar:'Entertainment > OTT', prime:'Entertainment > OTT', disney:'Entertainment > OTT',
+  youtube:'Entertainment > Subscription', apple:'Entertainment > Subscription',
+  gym:'Health > Gym', cult:'Health > Gym', healthify:'Health > Gym',
+  pharmacy:'Health > Medicine', medplus:'Health > Medicine', apollo:'Health > Medicine',
+  netmeds:'Health > Medicine', '1mg':'Health > Medicine',
+  udemy:'Learning > Courses', coursera:'Learning > Courses', unacademy:'Learning > Courses',
+  chatgpt:'Learning > AI Tools', claude:'Learning > AI Tools', openai:'Learning > AI Tools',
+  github:'Learning > Software', figma:'Learning > Software', notion:'Learning > Software',
+  emi:'Financial > EMI', insurance:'Financial > Insurance', lic:'Financial > Insurance',
+  mutual:'Financial > Investments', zerodha:'Financial > Investments', groww:'Financial > Investments',
+  credit:'Financial > Credit Card Payment'
+};
+
+// Online merchant keywords (for SBI 5% cashback)
+const ONLINE_KEYWORDS = ['amazon','flipkart','myntra','zomato','swiggy','blinkit','zepto','netflix','spotify','hotstar','udemy','nykaa','ajio','meesho','bigbasket','jiomart'];
+
+let db = { transactions:[], cards:[], emis:[], budgets:[], cashbackRules:[] };
+let editingTxId = null;
+let currentPage = 'dashboard';
+
+function loadDB() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (raw) {
+    try { db = JSON.parse(raw); } catch(e) {}
+  }
+  // Ensure defaults
+  if (!db.cards || db.cards.length === 0) db.cards = JSON.parse(JSON.stringify(DEFAULT_CARDS));
+  if (!db.emis || db.emis.length === 0) db.emis = JSON.parse(JSON.stringify(DEFAULT_EMIS));
+  if (!db.transactions) db.transactions = [];
+  if (!db.budgets) db.budgets = [];
+  if (!db.cashbackRules) db.cashbackRules = [];
+  if (!db.fixedSpends) db.fixedSpends = [];
+  if (!db.statementCycles) db.statementCycles = [];
+  // Migration: ensure every card has minDuePct/APR/weekendRollover for statement cycle engine
+  db.cards.forEach(c => {
+    if (c.minDuePct === undefined || c.minDuePct === null) c.minDuePct = 5;
+    if (c.interestRatePctApr === undefined || c.interestRatePctApr === null) c.interestRatePctApr = 42;
+    if (!c.weekendRollover) c.weekendRollover = 'none';
+    if (!c.autoPay) c.autoPay = 'none';
+    if (c.autoPayAmount === undefined || c.autoPayAmount === null) c.autoPayAmount = 0;
+  });
+  // Start with clean transactions for real personal use
+}
+
+function saveDB() {
+  try {
+    const serialized = JSON.stringify(db);
+    localStorage.setItem(STORAGE_KEY, serialized);
+    if (serialized.length > 4 * 1024 * 1024) showToast('⚠️ Storage nearly full. Export a backup soon.', 'orange');
+  } catch(e) {
+    if (e.name === 'QuotaExceededError') showToast('❌ Storage full! Export backup immediately before data loss.', 'red');
+    else console.error('saveDB failed:', e);
+  }
+}
+
+
+function loadRichDemoData() {
+  // Demo data removed
+  saveDB();
+}
+
+
+function loadSampleTransactions() {
+  // Demo transactions disabled for real usage
+  db.transactions = [];
+  saveDB();
+}
+
+
+
+
+
+
+// ============================================================
+// SIMPLE HINGLISH TO ENGLISH CONVERTER
+// ============================================================
+function normalizeEnglish(text) {
+  if (!text) return text;
+
+  const map = {
+    'doodh':'milk',
+    'paneer':'paneer',
+    'dahi':'curd',
+    'sabji':'vegetables',
+    'sabzi':'vegetables',
+    'kirana':'grocery',
+    'kapde':'clothing',
+    'petrol':'fuel',
+    'gaadi':'car',
+    'khana':'food',
+    'movie':'movie',
+    'gym':'gym',
+    'padhai':'course',
+    'shopping':'shopping',
+    'refund':'refund',
+    'cashback':'cashback'
+  };
+
+  let result = text.toLowerCase();
+
+  Object.keys(map).forEach(key=>{
+    const regex = new RegExp('\\b' + key + '\\b','gi');
+    result = result.replace(regex, map[key]);
+  });
+
+  return result;
+}
+
+
+
+
+
+
+
+
+
+
+// NAV handled by event delegation below
+
+
+// ============================================================
+// NAVIGATION
+// ============================================================
+function navigate(page) {
+  currentPage = page;
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const pageEl = document.getElementById('page-' + page);
+  if (pageEl) pageEl.classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const navEl = document.querySelector(`[data-page="${page}"]`);
+  if (navEl) navEl.classList.add('active');
+  const titles = { dashboard:'Dashboard', transactions:'Transactions', analytics:'Analytics', cards:'Credit Cards', emis:'EMI Tracker', cashback:'Cashback', budgets:'Budgets', fixedspends:'Fixed Spends', settings:'Settings' };
+  document.getElementById('pageTitle').textContent = titles[page] || page;
+  closeSidebar();
+  renderPage(page);
+}
+
+function renderPage(page) {
+  switch(page) {
+    case 'dashboard': renderDashboard(); break;
+    case 'transactions': renderTransactions(); break;
+    case 'analytics': renderAnalytics(window._analyticsTab || 'monthly'); break;
+    case 'cards': renderCards(); break;
+    case 'emis': renderEmis(); break;
+    case 'cashback': renderCashback(); break;
+    case 'budgets': renderBudgets(); break;
+    case 'fixedspends': renderFixedSpends(); break;
+    case 'settings': renderSettings(); break;
+  }
+}
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('sidebarOverlay').classList.toggle('open');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebarOverlay').classList.remove('open');
+}
+
+// ============================================================
+// UTILS
+// ============================================================
+function fmt(n) { const num=parseFloat(n); if(isNaN(num)) return '₹0'; return '₹'+num.toLocaleString('en-IN',{maximumFractionDigits:2}); }
+function escapeHtml(str) { return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function fmtPct(n) { return Number(n||0).toFixed(1) + '%'; }
+let _uidCounter = 0;
+function uid() { return `id_${Date.now()}_${(++_uidCounter).toString(36)}_${Math.random().toString(36).slice(2,9)}`; }
+function today() { return new Date().toISOString().split('T')[0]; }
+function nowMonth() { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+function monthLabel(m) { if(!m||!m.includes('-')) return m||'Unknown'; const [y,mo]=m.split('-'); return new Date(y,mo-1,1).toLocaleDateString('en-IN',{month:'short',year:'numeric'}); }
+
+function getCatEmoji(cat) {
+  const map = {
+    'Dairy':'🥛','Grocery':'🛒','Vegetables & Fruits':'🥬','Kitchen':'🍳','Home Essentials':'🏠',
+    'Shopping':'🛍️','Clothing':'👗','Electronics':'📱',
+    'Gym':'💪','Medicine':'💊','Supplements':'🧴',
+    'Fuel':'⛽','Toll':'🛣️','Parking':'🅿️','Cab':'🚕',
+    'Courses':'📚','AI Tools':'🤖','Software':'💻','Office':'📋',
+    'OTT':'🎬','Games':'🎮','Movies':'🎥','Subscription':'📺',
+    'EMI':'💳','Insurance':'🛡️','Investments':'📈','Credit Card Payment':'💰',
+    'Other':'📌'
+  };
+  const sub = cat ? cat.split(' > ').pop() : '';
+  return map[sub] || '💸';
+}
+
+function getCardById(id) { return db.cards.find(c => c.id === id); }
+
+
+function calculateCardOutstanding(cardId) {
+  const txOutstanding = db.transactions
+    .filter(t => t.card === cardId)
+    .reduce((sum, t) => {
+      if (t.type === 'expense') return sum + t.amount;
+      if (t.type === 'refund') return sum - t.amount;
+      if (t.type === 'payment') return sum - t.amount; // EMI/card payment reduces outstanding
+      return sum;
+    }, 0);
+  // Include active EMI outstanding on this card
+  const emiOutstanding = (db.emis || [])
+    .filter(e => e.card === cardId && e.active && e.remaining > 0)
+    .reduce((sum, e) => sum + (e.amount * e.remaining), 0);
+  return Math.max(0, txOutstanding) + emiOutstanding;
+}
+
+// ============================================================
+// STATEMENT CYCLE ENGINE (per-card billing cycles, min-due, FIFO pay)
+// ============================================================
+function daysInMonth(y, m) { return new Date(y, m + 1, 0).getDate(); }
+function toDateStr(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function isWeekendDate(d) { const day = d.getDay(); return day === 0 || day === 6; }
+function nextBusinessDay(d) { const r = new Date(d); while (isWeekendDate(r)) r.setDate(r.getDate() + 1); return r; }
+function prevBusinessDay(d) { const r = new Date(d); while (isWeekendDate(r)) r.setDate(r.getDate() - 1); return r; }
+function applyWeekendRule(card, d) {
+  if (!isWeekendDate(d)) return d;
+  if (card.weekendRollover === 'next_business_day') return nextBusinessDay(d);
+  if (card.weekendRollover === 'prev_business_day') return prevBusinessDay(d);
+  return d;
+}
+
+// Given a card and a tx date, resolve which statement cycle owns it
+function resolveCycleForCard(card, dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const billDay = card.billDate || 1;
+  let closeY = d.getFullYear(), closeM = d.getMonth();
+  if (d.getDate() > billDay) closeM += 1;
+  const periodEnd = new Date(closeY, closeM, Math.min(billDay, daysInMonth(closeY, closeM)));
+  const prevClose = new Date(closeY, closeM - 1, Math.min(billDay, daysInMonth(closeY, closeM - 1)));
+  const periodStart = new Date(prevClose); periodStart.setDate(periodStart.getDate() + 1);
+  const dueDay = card.dueDate || billDay;
+  let dueY = periodEnd.getFullYear(), dueM = periodEnd.getMonth();
+  if (dueDay <= billDay) dueM += 1; // due date wraps into next month
+  let dueDate = new Date(dueY, dueM, Math.min(dueDay, daysInMonth(dueY, dueM)));
+  dueDate = applyWeekendRule(card, dueDate);
+  const cycleId = card.id + ':' + periodEnd.getFullYear() + '-' + String(periodEnd.getMonth() + 1).padStart(2, '0');
+  return { cycleId, cardId: card.id, periodStart: toDateStr(periodStart), periodEnd: toDateStr(periodEnd), dueDate: toDateStr(dueDate) };
+}
+
+// Full rebuild of db.statementCycles from transactions + payments (cheap, small dataset)
+function syncStatementCycles() {
+  const todayStr = toDateStr(new Date());
+  const refundMap = buildRefundMap();
+  const allCycles = [];
+  db.cards.forEach(card => {
+    const txs = db.transactions.filter(t => t.card === card.id && (t.type === 'expense' || t.type === 'refund') && t.date);
+    const cycleMap = {};
+    const getRow = (dateStr) => {
+      const c = resolveCycleForCard(card, dateStr);
+      if (!cycleMap[c.cycleId]) cycleMap[c.cycleId] = Object.assign({ spend: 0, refund: 0, cashback: 0 }, c);
+      return cycleMap[c.cycleId];
+    };
+    getRow(todayStr); // ensure current open cycle always exists
+    txs.forEach(t => {
+      const row = getRow(t.date);
+      if (t.type === 'expense') { row.spend += t.amount; row.cashback += effectiveCashback(t, refundMap); }
+      else if (t.type === 'refund') { row.refund += t.amount; }
+    });
+    const sorted = Object.values(cycleMap).sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
+    const payments = db.transactions.filter(t => t.card === card.id && t.type === 'payment')
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    let paymentPool = payments.reduce((s, p) => s + p.amount, 0);
+    let opening = 0;
+    sorted.forEach(c => {
+      c.opening = opening;
+      const netThisCycle = c.spend - c.refund - c.cashback;
+      if (c.periodEnd < todayStr) {
+        c.statementAmount = Math.max(0, opening + netThisCycle);
+        c.minDue = Math.round(c.statementAmount * ((card.minDuePct || 5) / 100));
+        const applied = Math.min(paymentPool, c.statementAmount);
+        paymentPool -= applied;
+        c.paid = applied;
+        c.remaining = Math.max(0, c.statementAmount - applied);
+        c.status = c.remaining <= 0.5 ? 'paid' : (c.dueDate < todayStr ? 'overdue' : 'closed');
+        c.unbilled = 0;
+        if (c.status === 'overdue') {
+          const daysOverdue = Math.max(0, Math.floor((new Date(todayStr) - new Date(c.dueDate)) / 86400000));
+          const apr = card.interestRatePctApr || 42;
+          c.interestAccrued = Math.round(c.remaining * (apr / 100 / 365) * daysOverdue);
+        } else {
+          c.interestAccrued = 0;
+        }
+        opening = c.remaining; // unpaid balance revolves into next cycle's opening balance
+      } else {
+        c.statementAmount = 0; c.minDue = 0; c.paid = 0; c.remaining = 0; c.interestAccrued = 0;
+        c.status = 'open';
+        c.unbilled = Math.max(0, opening + netThisCycle);
+        opening = 0;
+      }
+      allCycles.push(c);
+    });
+  });
+  db.statementCycles = allCycles;
+  assertCycleInvariants(allCycles);
+  return allCycles;
+}
+
+function getCardSnapshot(cardId) {
+  const cycles = db.statementCycles.filter(c => c.cardId === cardId).sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
+  const open = cycles.find(c => c.status === 'open') || null;
+  const closedCycles = cycles.filter(c => c.status !== 'open');
+  const latestClosed = closedCycles.length ? closedCycles[closedCycles.length - 1] : null;
+  const totalOutstanding = closedCycles.filter(c => c.status !== 'paid').reduce((s, c) => s + c.remaining + (c.interestAccrued||0), 0) + (open ? open.unbilled : 0);
+  const todayStr = toDateStr(new Date());
+  const daysRemaining = latestClosed ? Math.ceil((new Date(latestClosed.dueDate) - new Date(todayStr)) / 86400000) : null;
+  return { open, latestClosed, cycles, totalOutstanding, daysRemaining };
+}
+
+function getStatementHistory(cardId) {
+  return db.statementCycles.filter(c => c.cardId === cardId && c.status !== 'open').sort((a, b) => b.periodEnd.localeCompare(a.periodEnd));
+}
+
+// Invariants — data-integrity sanity checks over statement cycles.
+// Never throws to the user; logs to console and (if broken) shows a one-time warning toast,
+// so a silent bug in the billing math surfaces instead of quietly showing wrong numbers.
+function assertCycleInvariants(cycles) {
+  const problems = [];
+  cycles.forEach(c => {
+    if (c.remaining < -0.5) problems.push(`${c.cycleId}: negative remaining (${c.remaining})`);
+    if (c.status !== 'open') {
+      const drift = Math.abs((c.paid + c.remaining) - c.statementAmount);
+      if (drift > 1) problems.push(`${c.cycleId}: paid+remaining drift from statementAmount (Δ${drift.toFixed(2)})`);
+    }
+    if (c.minDue < 0) problems.push(`${c.cycleId}: negative minDue`);
+  });
+  if (problems.length) {
+    console.warn('⚠️ Statement cycle invariant violations:', problems);
+  }
+  return problems;
+}
+
+// EMI Auto-Pay: check if card bill date has passed and auto-pay due EMIs
+function checkEmiAutoPay() {
+  const now = new Date();
+  const curMonth = nowMonth();
+  const todayDay = now.getDate();
+
+  let autoPaid = 0;
+  (db.emis || []).forEach(e => {
+    if (!e.active || e.remaining <= 0) return;
+
+    // Get linked card's bill date
+    const card = getCardById(e.card);
+    const billDay = card ? (card.billDate || 1) : 1;
+
+    // Only auto-pay if today's date >= card's bill date (bill has been generated)
+    if (todayDay < billDay) return;
+
+    // Check if this EMI has NOT been auto-paid this month already
+    const alreadyPaidThisMonth = db.transactions.some(t =>
+      t.tags && t.tags.includes('emi-auto') &&
+      t._emiId === e.id &&
+      t.date && t.date.startsWith(curMonth)
+    );
+    if (!alreadyPaidThisMonth) {
+      const autoPayDate = `${curMonth}-${String(billDay).padStart(2,'0')}`;
+      const tx = {
+        id: uid(), date: autoPayDate,
+        merchant: `EMI - ${e.name}`,
+        amount: e.amount,
+        category: 'Financial > EMI',
+        card: e.card, paymentMode: e.card ? 'Credit Card' : 'UPI',
+        type: 'emi-payment', cashbackPct: 0, cashbackAmt: 0, _originalCashbackAmt: 0, netSpend: 0,
+        notes: `Auto EMI payment (${e.tenure - e.remaining + 1}/${e.tenure}) — Bill date: ${billDay}th`,
+        tags: ['emi', 'emi-auto'], rewardPoints: 0, _emiId: e.id
+      };
+      db.transactions.unshift(tx);
+      e.remaining = Math.max(0, e.remaining - 1);
+      if (e.remaining === 0) e.active = false;
+      autoPaid++;
+    }
+  });
+
+  if (autoPaid > 0) {
+    saveDB();
+    const MN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const nd = new Date();
+    showToast(`✅ ${autoPaid} EMI(s) auto-paid for ${MN[nd.getMonth()]} · Next: ${MN[(nd.getMonth()+1)%12]}`, 'green');
+  } else {
+    saveDB();
+  }
+}
+
+
+function getCardLabel(id) {
+  const c = getCardById(id);
+  return c ? `${c.bank} ${c.name}` : (id || 'UPI/Cash');
+}
+
+// Card Bill Auto-Pay: once a statement closes, if card.autoPay is set,
+// automatically create a payment tx on/after the due date (one attempt per cycle, ever).
+function checkCardAutoPay() {
+  syncStatementCycles();
+  const todayStr = toDateStr(new Date());
+  let autoPaid = 0;
+  db.cards.forEach(card => {
+    if (!card.autoPay || card.autoPay === 'none') return;
+    const snap = getCardSnapshot(card.id);
+    const c = snap.latestClosed;
+    if (!c || c.status === 'paid') return;
+    if (todayStr < c.dueDate) return; // trigger only once due date reached
+
+    const alreadyAttempted = db.transactions.some(t => t._autoPayCycleId === c.cycleId);
+    if (alreadyAttempted) return;
+
+    let amount = 0;
+    if (card.autoPay === 'min') amount = c.minDue;
+    else if (card.autoPay === 'full') amount = c.remaining;
+    else if (card.autoPay === 'fixed') amount = Math.min(card.autoPayAmount || 0, c.remaining);
+    if (!amount || amount <= 0) return;
+
+    const tx = {
+      id: uid(), date: todayStr,
+      merchant: 'Card Bill Payment (Auto)',
+      amount,
+      category: 'Financial > Credit Card Payment',
+      card: card.id, paymentMode: 'Bank Transfer',
+      type: 'payment', cashbackPct: 0, cashbackAmt: 0, _originalCashbackAmt: 0, netSpend: 0,
+      notes: `Auto-pay (${card.autoPay}) — ${card.bank} ${card.name}, cycle ${c.periodStart} → ${c.periodEnd}`,
+      tags: ['card-bill-payment', 'auto-pay'], rewardPoints: 0, _autoPayCycleId: c.cycleId
+    };
+    db.transactions.unshift(tx);
+    autoPaid++;
+  });
+  if (autoPaid > 0) {
+    saveDB();
+    syncStatementCycles();
+    showToast(`✅ ${autoPaid} card bill(s) auto-paid`, 'green');
+  }
+}
+
+function isOnlineTx(tx) {
+  const m = (tx.merchant || '').toLowerCase();
+  return ONLINE_KEYWORDS.some(k => m.includes(k)) || (tx.tags && tx.tags.includes('online'));
+}
+
+function calcCashback(tx) {
+  const card = getCardById(tx.card);
+
+  if (!card) return 0;
+
+  const online = isOnlineTx(tx);
+
+  const pct = online
+    ? (card.onlineCashbackPct || card.cashbackPct || 0)
+    : (card.cashbackPct || 0);
+
+  const value = +(tx.amount * pct / 100).toFixed(2);
+
+  return tx.type === 'refund'
+    ? -value
+    : value;
+}
+
+function getTxMonth(tx) { if (!tx.date || typeof tx.date !== 'string') return 'Unknown'; return tx.date.substring(0,7); }
+
+function getCurrentMonthTxs() {
+  const cur = nowMonth();
+  return db.transactions.filter(t => getTxMonth(t) === cur);
+}
+
+function detectCategory(merchant) {
+  const m = merchant.toLowerCase();
+  for (const [key, cat] of Object.entries(MERCHANT_MAP)) {
+    if (m.includes(key)) return cat;
+  }
+  return 'Miscellaneous > Other';
+}
+
+
+function openQuickEmiPurchase() {
+  const sel = document.getElementById('qeCard');
+
+  sel.innerHTML = db.cards.map(c =>
+    `<option value="${c.id}">${c.bank} ${c.name}</option>`
+  ).join('');
+
+  document.getElementById('qeDate').value = today();
+
+  openModal('quickEmiModal');
+}
+
+function saveQuickEmiPurchase() {
+  const product = document.getElementById('qeProduct').value.trim();
+  const total = parseFloat(document.getElementById('qePrice').value);
+  const monthly = parseFloat(document.getElementById('qeMonthly').value);
+  const months = parseInt(document.getElementById('qeMonths').value);
+  const card = document.getElementById('qeCard').value;
+  const date = document.getElementById('qeDate').value;
+
+  if (!product || !monthly || !months) {
+    showToast('❌ Fill all EMI details', 'red');
+    return;
+  }
+
+  // Add EMI entry
+  db.emis.unshift({
+    id: uid(),
+    name: product,
+    amount: monthly,
+    tenure: months,
+    remaining: months,
+    card,
+    startDate: date,
+    active: true,
+    totalAmount: total || (monthly * months)
+  });
+
+  // Add transaction
+  db.transactions.unshift({
+    id: uid(),
+    date,
+    merchant: product,
+    amount: total || (monthly * months),
+    category: 'Financial > EMI',
+    card,
+    paymentMode: 'Credit Card',
+    type: 'expense',
+    cashbackPct: 0,
+    cashbackAmt: 0,
+    netSpend: total || (monthly * months),
+    notes: 'Purchased on EMI',
+    tags: ['emi'],
+    rewardPoints: 0
+  });
+
+  saveDB();
+
+  closeModal('quickEmiModal');
+
+  showToast('✅ EMI purchase added', 'green');
+
+  renderPage(currentPage);
+}
+
+
+
+function formatProfessionalDate(dateStr) {
+  const d = new Date(dateStr);
+
+  return d.toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+  });
+}
+
+
+// ============================================================
+// QUICK ADD PARSER
+// ============================================================
+function processQuickAdd() {
+  const raw = document.getElementById('quickInput').value.trim();
+  if (!raw) return;
+  const parsed = parseQuickInput(raw);
+  if (!parsed) { showToast('❌ Could not understand input', 'red'); return; }
+  saveParsedTransaction(parsed);
+  document.getElementById('quickInput').value = '';
+  document.getElementById('smartPreview').innerHTML = 'Try: <span>500 blinkit sbi</span> · <span>refund 200 amazon</span> · <span>149 spotify hdfc</span>';
+  showToast(`✅ Added: ${parsed.merchant} ${fmt(parsed.amount)}`, 'green');
+  renderPage(currentPage);
+}
+
+
+function parseQuickInput(raw) {
+  raw = normalizeEnglish(raw);
+
+  const original = raw;
+  const lower = raw.toLowerCase();
+
+  let type = lower.includes('refund') ? 'refund' : 'expense';
+
+  const amountMatch = lower.match(/(\d+(\.\d+)?)/);
+
+  if (!amountMatch) return null;
+
+  const amount = parseFloat(amountMatch[1]);
+
+  let cardId = '';
+
+  if (lower.includes('sbi')) {
+    cardId = 'sbi_cashback';
+  }
+  else if (lower.includes('rupay')) {
+    cardId = 'hdfc_rupay';
+  }
+  else if (lower.includes('hdfc')) {
+    cardId = 'hdfc_moneyback';
+  }
+  else if (lower.includes('icici')) {
+    cardId = 'icici_platinum';
+  }
+
+  let cleaned = lower
+    .replace(/refund/g, '')
+    .replace(/card/g, '')
+    .replace(/from/g, '')
+    .replace(/using/g, '')
+    .replace(/paid/g, '')
+    .replace(/\bon\b/g, '')
+    .replace(/sbi/g, '')
+    .replace(/hdfc/g, '')
+    .replace(/icici/g, '')
+    .replace(/rupay/g, '')
+    .replace(/\d{1,2}\s[a-z]+\s\d{4}/gi, '')
+    .replace(/\d+/g, '')
+    .trim();
+
+  let merchant = cleaned
+    .split(' ')
+    .filter(Boolean)
+    .filter(w => !['in','via','using','from','paid'].includes(w))
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+
+  merchant = merchant || 'Unknown';
+
+  if (!merchant) merchant = 'Unknown';
+
+  const category = detectCategory(merchant);
+
+  const online = ONLINE_KEYWORDS.some(k =>
+    merchant.toLowerCase().includes(k)
+  );
+
+  const card = getCardById(cardId);
+
+  let cashbackPct = 0;
+
+  if (card) {
+    cashbackPct = online
+      ? (card.onlineCashbackPct || card.cashbackPct || 0)
+      : (card.cashbackPct || 0);
+  }
+
+  const cashbackAmt = type === 'refund'
+    ? 0
+    : +(amount * cashbackPct / 100).toFixed(2);
+
+  // If user doesn't provide date, today's date is used automatically
+  let txDate = today();
+
+  const dateMatch = original.match(/(\\d{1,2}\\s[a-zA-Z]+\\s\\d{4})/);
+
+  if (dateMatch) {
+    const parsedDate = new Date(dateMatch[1]);
+
+    if (!isNaN(parsedDate)) {
+      txDate = parsedDate.toISOString().split('T')[0];
+    }
+  }
+
+  return {
+    id: uid(),
+    date: txDate,
+    merchant,
+    amount,
+    category,
+    card: cardId,
+    paymentMode: cardId ? 'Credit Card' : 'UPI',
+    type,
+    cashbackPct,
+    cashbackAmt,
+    netSpend: type === 'refund'
+      ? -amount
+      : amount - cashbackAmt,
+    notes: '',
+    tags: online ? ['online'] : [],
+    rewardPoints: card ? Math.floor(amount / 100) : 0
+  };
+}
+
+
+// Live parse preview
+document.addEventListener('DOMContentLoaded', () => {
+  const inp = document.getElementById('quickInput');
+  inp.addEventListener('input', () => {
+    const raw = inp.value.trim();
+    if (!raw) {
+      document.getElementById('smartPreview').innerHTML = 'Try: <span>500 blinkit sbi</span> · <span>refund 200 amazon</span> · <span>149 spotify hdfc</span>';
+      return;
+    }
+    const p = parseQuickInput(raw);
+    if (p) {
+      const cbStr = p.cashbackAmt > 0 ? ` · <span style="color:var(--green)">Cashback: ${fmt(p.cashbackAmt)}</span>` : '';
+      document.getElementById('smartPreview').innerHTML =
+        `<span>${p.type === 'refund' ? '↩️ Refund' : '💸 Expense'}</span> · <span>${p.merchant}</span> · <span>${fmt(p.amount)}</span> · <span>${p.category}</span> · <span>${getCardLabel(p.card) || 'UPI'}</span>${cbStr}`;
+    } else {
+      document.getElementById('smartPreview').textContent = 'Could not understand — try: 500 amazon sbi';
+    }
+  });
+});
+
+function saveParsedTransaction(tx) {
+  db.transactions.unshift(tx);
+  if (tx.type === 'refund') adjustRefundImpact(tx);
+  saveDB();
+}
+
+// ============================================================
+// MODAL HELPERS
+// ============================================================
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); editingTxId = null; }
+
+function openAddModal(prefill) {
+  editingTxId = prefill ? prefill.id : null;
+  document.getElementById('addModalTitle').textContent = editingTxId ? 'Edit Transaction' : 'Add Transaction';
+  // Populate category dropdown
+  const catSel = document.getElementById('fCategory');
+  catSel.innerHTML = ALL_CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join('');
+  // Populate card dropdown
+  const cardSel = document.getElementById('fCard');
+  cardSel.innerHTML = '<option value="">UPI</option><option value="cash">Cash</option>' +
+    db.cards.map(c => `<option value="${c.id}">${c.bank} ${c.name}</option>`).join('');
+  // Set date
+  document.getElementById('fDate').value = prefill ? prefill.date : today();
+  if (prefill) {
+    document.getElementById('fAmount').value = prefill.amount;
+    document.getElementById('fMerchant').value = prefill.merchant;
+    document.getElementById('fCategory').value = prefill.category;
+    document.getElementById('fCard').value = prefill.card || '';
+    document.getElementById('fType').value = prefill.type;
+    document.getElementById('fCashbackPct').value = prefill.cashbackPct;
+    document.getElementById('fTags').value = (prefill.tags||[]).join(', ');
+    document.getElementById('fNotes').value = prefill.notes || '';
+  } else {
+    ['fAmount','fMerchant','fCashbackPct','fTags','fNotes'].forEach(id => { document.getElementById(id).value = ''; });
+    document.getElementById('fType').value = 'expense';
+  }
+  document.getElementById('suggestionBanner').style.display = 'none';
+  openModal('addModal');
+}
+
+function autoDetectCategory() {
+  const m = document.getElementById('fMerchant').value;
+  if (!m) return;
+  const cat = detectCategory(m);
+  document.getElementById('fCategory').value = cat;
+  updateSuggestion();
+}
+
+function updateSuggestion() {
+  const amt = parseFloat(document.getElementById('fAmount').value) || 0;
+  if (!amt) { document.getElementById('suggestionBanner').style.display='none'; return; }
+  const merchant = document.getElementById('fMerchant').value;
+  const online = ONLINE_KEYWORDS.some(k => merchant.toLowerCase().includes(k));
+  if (online) {
+    // Find best card
+    let best = null, bestCb = 0;
+    db.cards.forEach(c => {
+      const cb = online ? (c.onlineCashbackPct || c.cashbackPct || 0) : (c.cashbackPct || 0);
+      if (cb > bestCb) { bestCb = cb; best = c; }
+    });
+    if (best && bestCb > 0) {
+      const cbAmt = +(amt * bestCb / 100).toFixed(2);
+      document.getElementById('suggestionBanner').style.display = 'block';
+      document.getElementById('suggestionBanner').innerHTML =
+        `💡 Use <strong>${best.bank} ${best.name}</strong> for max cashback: <strong>${fmt(cbAmt)} (${bestCb}%)</strong>`;
+    }
+  } else {
+    document.getElementById('suggestionBanner').style.display='none';
+  }
+}
+
+function saveTransaction() {
+  const amount = parseFloat(document.getElementById('fAmount').value);
+  const merchant = document.getElementById('fMerchant').value.trim();
+  if (!amount || isNaN(amount) || amount <= 0) { showToast('❌ Valid amount required', 'red'); return; }
+  if (amount > 10000000) { showToast('❌ Amount seems too large', 'red'); return; }
+  if (!merchant) { showToast('❌ Merchant required', 'red'); return; }
+  const type = document.getElementById('fType').value;
+  const cardId = document.getElementById('fCard').value;
+  let cbPct = Math.min(100, Math.max(0, parseFloat(document.getElementById('fCashbackPct').value) || 0));
+  if (!cbPct && cardId && type !== 'refund') {
+    const card = getCardById(cardId);
+    const online = ONLINE_KEYWORDS.some(k => merchant.toLowerCase().includes(k));
+    if (card) cbPct = online ? (card.onlineCashbackPct || card.cashbackPct || 0) : (card.cashbackPct || 0);
+  }
+  const cbAmt = type === 'refund' ? 0 : +(amount * cbPct / 100).toFixed(2);
+  const tx = {
+    id: editingTxId || uid(),
+    date: document.getElementById('fDate').value || today(),
+    merchant,
+    amount,
+    category: document.getElementById('fCategory').value,
+    card: cardId,
+    paymentMode: cardId && cardId !== 'cash' ? 'Credit Card' : (cardId === 'cash' ? 'Cash' : 'UPI'),
+    type,
+    cashbackPct: cbPct,
+    cashbackAmt: cbAmt,
+    _originalCashbackAmt: cbAmt,
+    netSpend: type === 'refund' ? -amount : amount - cbAmt,
+    notes: document.getElementById('fNotes').value,
+    tags: document.getElementById('fTags').value.split(',').map(t=>t.trim()).filter(Boolean),
+    rewardPoints: getCardById(cardId) ? Math.floor(amount/100) : 0
+  };
+  if (editingTxId) {
+    const idx = db.transactions.findIndex(t => t.id === editingTxId);
+    if (idx >= 0) db.transactions[idx] = tx;
+  } else {
+    db.transactions.unshift(tx);
+    if (tx.type === 'refund') adjustRefundImpact(tx);
+  }
+  saveDB();
+  closeModal('addModal');
+  showToast(`✅ Transaction saved: ${fmt(amount)}`, 'green');
+  renderPage(currentPage);
+}
+
+
+
+
+// ============================================================
+// REFUND ADJUSTMENT ENGINE
+// ============================================================
+function adjustRefundImpact(refundTx) {
+  // No mutation of original needed - cashback is computed dynamically via effectiveCashback()
+  refundTx.netSpend = -refundTx.amount;
+  saveDB();
+}
+
+// Pre-compute refund map for O(n) cashback lookups
+function buildRefundMap() {
+  const map = {};
+  db.transactions.filter(t => t.type === 'refund' && t._linkedTxId).forEach(r => {
+    map[r._linkedTxId] = (map[r._linkedTxId] || 0) + r.amount;
+  });
+  return map;
+}
+
+// Compute the real cashback for an expense after accounting for all refunds
+function effectiveCashback(tx, refundMap) {
+  if (tx.type !== 'expense') return 0;
+  const originalCashback = tx._originalCashbackAmt ?? tx.cashbackAmt ?? 0;
+  if (!originalCashback || !tx.amount) return 0;
+  let totalRefunded;
+  if (refundMap) {
+    totalRefunded = refundMap[tx.id] || 0;
+  } else {
+    totalRefunded = db.transactions
+      .filter(r => r.type === 'refund' && r._linkedTxId === tx.id)
+      .reduce((s,r) => s+r.amount, 0);
+  }
+  const refundRatio = Math.min(totalRefunded / tx.amount, 1);
+  return +(originalCashback * (1 - refundRatio)).toFixed(2);
+}
+
+
+// ============================================================
+// DASHBOARD
+// ============================================================
+
+function renderDashboard() {
+  const txs = getCurrentMonthTxs();
+  const refundMap = buildRefundMap();
+
+  const expenses = txs.filter(t => t.type === 'expense');
+  const refunds = txs.filter(t => t.type === 'refund');
+
+  const totalSpend = expenses.reduce((s,t)=>s+t.amount,0);
+  const totalRefund = refunds.reduce((s,t)=>s+t.amount,0);
+  const cashback = expenses.reduce((s,t)=>s+effectiveCashback(t,refundMap),0);
+
+  document.getElementById('dashStats').innerHTML = `
+    <div class="stat-card">
+      <div class="label">Total Spend</div>
+      <div class="value">${fmt(totalSpend)}</div>
+      <div class="sub">Current Month</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="label">Cashback</div>
+      <div class="value text-green">${fmt(cashback)}</div>
+      <div class="sub">Estimated Rewards</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="label">Refunds</div>
+      <div class="value text-orange">${fmt(totalRefund)}</div>
+      <div class="sub">Total Refund Received</div>
+    </div>
+
+    <div class="stat-card">
+      <div class="label">Net Spend After Cashback</div>
+      <div class="value">${fmt(totalSpend - totalRefund - cashback)}</div>
+      <div class="sub">Actual Expense</div>
+    </div>
+  `;
+
+  // Recent Transactions - compact horizontal, max 3
+  const recent = txs.slice(0,3);
+  document.getElementById('recentTxList').innerHTML =
+    recent.length ?
+    recent.map(t => {
+      const isRefund = t.type === 'refund';
+      const card = getCardById(t.card);
+      const cardLabel = card ? `${card.bank} ${card.name}` : (t.paymentMode === 'Cash' ? 'Cash' : 'UPI');
+      const cb = effectiveCashback(t);
+      const catShort = (t.category||'Other').split(' > ').pop();
+      const dd = new Date(t.date);
+      const isPayment = t.type === 'payment';
+      const amtColor = isRefund || isPayment ? 'var(--green)' : 'var(--red)';
+      const amtSign = isRefund || isPayment ? '+' : '-';
+      const txIcon = isPayment ? '💸' : isRefund ? '↩️' : getCatEmoji(t.category);
+      const txBg = isRefund || isPayment ? 'rgba(34,197,94,0.1)' : 'var(--surface2)';
+      return `<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);cursor:pointer;" onclick="showTxDetail('${t.id}')">
+        <div style="min-width:32px;text-align:center;flex-shrink:0;">
+          <div style="font-size:14px;font-weight:700;color:var(--text);line-height:1.1;">${dd.getDate()}</div>
+          <div style="font-size:9px;color:var(--text3);text-transform:uppercase;">${dd.toLocaleDateString('en-IN',{month:'short'})}</div>
+        </div>
+        <div style="width:32px;height:32px;border-radius:8px;background:${txBg};display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;">${txIcon}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.merchant}</div>
+          <div style="display:flex;align-items:center;gap:5px;margin-top:2px;">
+            <span style="font-size:10px;background:rgba(79,142,247,0.1);color:var(--accent);padding:1px 5px;border-radius:3px;">${catShort}</span>
+            <span style="font-size:10px;color:var(--text3);">${cardLabel}</span>
+            ${cb > 0 ? `<span style="font-size:10px;color:var(--green);">+${fmt(cb)}</span>` : ''}
+          </div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;">
+          <div style="font-size:14px;font-weight:700;color:${amtColor};">${amtSign}${fmt(t.amount)}</div>
+        </div>
+      </div>`;
+    }).join('') + `<div style="padding:8px 16px;"><button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;" onclick="navigate('transactions')">View All Transactions →</button></div>`
+    :
+    '<div class="empty-state" style="padding:20px;"><div class="icon">💳</div><p>No transactions yet</p></div>';
+
+  // Category Breakdown
+  const categories = {};
+
+  expenses.forEach(t => {
+    const cat = t.category.split(' > ').pop();
+    categories[cat] = (categories[cat] || 0) + t.amount;
+  });
+
+  const total = Object.values(categories).reduce((a,b)=>a+b,0);
+
+  document.getElementById('catBreakdown').innerHTML =
+    Object.keys(categories).length ?
+    Object.entries(categories)
+      .sort((a,b)=>b[1]-a[1])
+      .map(([cat,val]) => {
+        const pct = total ? ((val/total)*100).toFixed(1) : 0;
+
+        return `
+          <div class="cat-row">
+            <div class="cat-label">${cat}</div>
+
+            <div class="cat-bar">
+              <div class="progress-bar">
+                <div class="progress-fill"
+                  style="width:${pct}%;background:linear-gradient(90deg,var(--accent),var(--accent2));">
+                </div>
+              </div>
+            </div>
+
+            <div class="cat-amount">${fmt(val)}</div>
+          </div>
+        `;
+      }).join('')
+    :
+    '<div class="empty-state"><p>No category data</p></div>';
+
+  // Upcoming Payments
+  let upcomingHtml = '';
+  const curMonth = nowMonth();
+  db.cards.forEach(card => {
+    // Regular spend this month — EXCLUDE auto-EMI transactions (counted separately below)
+    const monthExpenses = db.transactions
+      .filter(t => t.card === card.id && getTxMonth(t) === curMonth && t.type === 'expense'
+               && !(t.tags && t.tags.includes('emi-auto')))
+      .reduce((s,t) => s + t.amount, 0);
+    const monthRefunds = db.transactions
+      .filter(t => t.card === card.id && getTxMonth(t) === curMonth && t.type === 'refund')
+      .reduce((s,t) => s + t.amount, 0);
+    const monthSpend = Math.max(0, monthExpenses - monthRefunds);
+
+    // Cashback earned this month — only subtract if card credits cashback to statement
+    const monthCashback = card.cashbackToCard
+      ? db.transactions
+          .filter(t => t.card === card.id && getTxMonth(t) === curMonth && t.type === 'expense')
+          .reduce((s,t) => s + effectiveCashback(t), 0)
+      : 0;
+
+    // EMI month-wise logic
+    const todayDay = new Date().getDate();
+    const billDay = card.billDate || 5;
+    const UPC_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const nowDt = new Date();
+
+    // For each active EMI on this card: check if this month's installment is paid
+    const cardActiveEmis = (db.emis||[]).filter(e=>e.card===card.id&&e.active&&e.remaining>0);
+
+    // Determine per-EMI: is this month paid?
+    const emiThisMonthPending = cardActiveEmis.filter(e => {
+      const paid = db.transactions.some(t =>
+        (t._emiId===e.id || (t.tags&&t.tags.includes('emi-auto')&&t.merchant===`EMI - ${e.name}`))
+        && t.date && t.date.startsWith(curMonth)
+      );
+      return !paid; // still pending this month
+    });
+    const emiThisMonthPaid = cardActiveEmis.filter(e => {
+      const paid = db.transactions.some(t =>
+        (t._emiId===e.id || (t.tags&&t.tags.includes('emi-auto')&&t.merchant===`EMI - ${e.name}`))
+        && t.date && t.date.startsWith(curMonth)
+      );
+      return paid;
+    });
+
+    const pendingEmiMonthly = emiThisMonthPending.reduce((s,e)=>s+e.amount,0);
+    const autoEmiPaidAmt = emiThisMonthPaid.reduce((s,e)=>s+e.amount,0);
+
+    // Next month's EMI (for cards where this month all EMIs are paid)
+    const nextMonthStr = `${nowDt.getMonth()===11?nowDt.getFullYear()+1:nowDt.getFullYear()}-${String((nowDt.getMonth()+2)>12?1:(nowDt.getMonth()+2)).padStart(2,'0')}`;
+    const nextMonthName = UPC_MONTHS[(nowDt.getMonth()+1)%12];
+    const curMonthName = UPC_MONTHS[nowDt.getMonth()];
+
+    // Show card in upcoming if: has any regular spend OR has pending EMI this month OR has paid EMI (show next month info)
+    const totalBill = monthSpend + pendingEmiMonthly - monthCashback;
+    const hasActivity = totalBill > 0 || monthSpend > 0 || pendingEmiMonthly > 0 || autoEmiPaidAmt > 0;
+
+    if (hasActivity) {
+      const dueDay = card.dueDate || 25;
+
+      // EMI label: pending shows current month, paid shows next month upcoming
+      let emiLabel = '';
+      if (pendingEmiMonthly > 0 && autoEmiPaidAmt > 0) {
+        emiLabel = `EMI: <span style="color:var(--green);">✓ ${fmt(autoEmiPaidAmt)} paid</span> + <span style="color:var(--orange);">${fmt(pendingEmiMonthly)} ${curMonthName} pending</span>`;
+      } else if (pendingEmiMonthly > 0) {
+        emiLabel = `EMI: <span style="color:var(--orange);">₹${fmt(pendingEmiMonthly)} — ${curMonthName} pending</span>`;
+      } else if (autoEmiPaidAmt > 0 && cardActiveEmis.length > 0) {
+        // All this month paid — show next month
+        const nextAmt = cardActiveEmis.reduce((s,e)=>s+e.amount,0);
+        emiLabel = `EMI: <span style="color:var(--green);">✓ ${curMonthName} paid</span> · <span style="color:var(--text3);">Next: ${nextMonthName} ${fmt(nextAmt)}</span>`;
+      }
+
+      upcomingHtml += `
+        <div style="display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--border);">
+          <div style="width:34px;height:34px;border-radius:8px;background:linear-gradient(135deg,rgba(79,142,247,0.2),rgba(108,99,255,0.15));display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">💳</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${card.bank} ${card.name}</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px;">
+              Bill: <span style="color:var(--text2);">${billDay}th</span> &nbsp;·&nbsp; Due: <span style="color:var(--orange);">${dueDay}th</span>
+            </div>
+            <div style="font-size:10px;color:var(--text3);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap;">
+              ${monthExpenses > 0 ? `<span>Spend: <span style="color:var(--text2);">${fmt(monthExpenses)}</span></span>` : ''}
+              ${monthRefunds > 0 ? `<span>Refund: <span style="color:var(--green);">-${fmt(monthRefunds)}</span></span>` : ''}
+              ${emiLabel ? `<span>${emiLabel}</span>` : ''}
+              ${monthCashback > 0 ? `<span>CB: <span style="color:var(--green);">-${fmt(monthCashback)}</span></span>` : ''}
+            </div>
+          </div>
+          <div style="text-align:right;flex-shrink:0;">
+            <div style="font-size:15px;font-weight:700;color:${pendingEmiMonthly>0||monthSpend>0?'var(--red)':'var(--green)'};">${pendingEmiMonthly>0||monthSpend>0?fmt(Math.max(0,totalBill)):'✓ Paid'}</div>
+            <div style="font-size:10px;color:var(--text3);">${pendingEmiMonthly>0||monthSpend>0?'net payable':'this month'}</div>
+          </div>
+        </div>`;
+    }
+  });
+  document.getElementById('upcomingPayments').innerHTML =
+    upcomingHtml || '<div class="empty-state" style="padding:16px;text-align:center;color:var(--text3);font-size:12px;">✅ No upcoming payments</div>';
+
+  // Subscription Tracker - compact horizontal
+  const subscriptions = expenses.filter(t =>
+    (t.category || '').includes('Subscription') ||
+    (t.category || '').includes('OTT') ||
+    (t.tags || []).includes('subscription')
+  );
+  document.getElementById('subscriptionTracker').innerHTML =
+    subscriptions.length ?
+    subscriptions.map(s => {
+      const card = getCardById(s.card);
+      const cardLabel = card ? `${card.bank} ${card.name}` : (s.paymentMode || 'UPI');
+      return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
+        <div style="width:34px;height:34px;border-radius:8px;background:rgba(168,85,247,0.1);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">📺</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.merchant}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px;">${cardLabel} &nbsp;·&nbsp; <span style="color:var(--purple);">Monthly</span></div>
+        </div>
+        <div style="font-size:14px;font-weight:700;color:var(--red);flex-shrink:0;">-${fmt(s.amount)}</div>
+      </div>`;
+    }).join('')
+    :
+    '<div class="empty-state" style="padding:16px;text-align:center;color:var(--text3);font-size:12px;">No subscriptions this month</div>';
+
+  // Active EMI Dashboard - compact horizontal, max 2
+  const activeEmis = db.emis.filter(e => e.active && e.remaining > 0);
+  document.getElementById('dashEmiList').innerHTML =
+    activeEmis.length ?
+    activeEmis.slice(0,2).map(e => {
+      const ecard = getCardById(e.card);
+      const cardLabel = ecard ? `${ecard.bank} ${ecard.name}` : 'No card';
+      const paid = e.tenure - e.remaining;
+      const pct = e.tenure ? paid/e.tenure*100 : 0;
+      return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
+        <div style="width:34px;height:34px;border-radius:8px;background:rgba(249,115,22,0.1);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">📦</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${e.name}</div>
+          <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+            <div class="progress-bar" style="flex:1;height:3px;"><div class="progress-fill" style="width:${pct}%;background:var(--orange);"></div></div>
+            <span style="font-size:10px;color:var(--text3);white-space:nowrap;">${paid}/${e.tenure}</span>
+          </div>
+          <div style="font-size:10px;color:var(--text3);margin-top:2px;">${cardLabel}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;">
+          <div style="font-size:14px;font-weight:700;color:var(--orange);">${fmt(e.amount)}/mo</div>
+          <div style="font-size:10px;color:var(--text3);">${fmt(e.amount*e.remaining)} left</div>
+        </div>
+      </div>`;
+    }).join('') + (activeEmis.length > 2 ? `<div style="padding-top:8px;"><button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;" onclick="navigate('emis')">View All EMIs →</button></div>` : '')
+    :
+    '<div class="empty-state" style="padding:16px;text-align:center;color:var(--text3);font-size:12px;">No active EMIs</div>';
+
+  // Fixed Spends Dashboard - compact horizontal, max 3
+  const fixedList = db.fixedSpends || [];
+  const fixedTotal = fixedList.reduce((s,f)=>s+f.amount,0);
+  document.getElementById('dashFixedSpends').innerHTML =
+    fixedList.length ?
+    fixedList.slice(0,3).map(f => {
+      const fcard = getCardById(f.card);
+      const cardLabel = fcard ? `${fcard.bank} ${fcard.name}` : (f.card === 'cash' ? 'Cash' : 'UPI');
+      return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
+        <div style="width:34px;height:34px;border-radius:8px;background:rgba(234,179,8,0.1);display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0;">${getCatEmoji(f.category)}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${f.name}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px;">${cardLabel}${f.dueDay?` · Due: <span style="color:var(--orange);">${f.dueDay}th</span>`:''}</div>
+        </div>
+        <div style="font-size:14px;font-weight:700;color:var(--yellow);flex-shrink:0;">${fmt(f.amount)}</div>
+      </div>`;
+    }).join('') + `<div style="padding:8px 0 0;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:11px;color:var(--text3);">Total: <span style="color:var(--yellow);font-weight:700;">${fmt(fixedTotal)}/mo</span></span>${fixedList.length>3?`<button class="btn btn-ghost btn-sm" onclick="navigate('fixedspends')">View All →</button>`:''}</div>`
+    :
+    '<div class="empty-state" style="padding:16px;text-align:center;color:var(--text3);font-size:12px;">No fixed spends added</div>';
+
+  // Card Utilization - show only top 2 cards (prioritize sbi_cashback, hdfc_rupay), compact
+  const priorityIds = ['sbi_cashback', 'hdfc_rupay'];
+  const sortedCards = [...db.cards].sort((a,b) => {
+    const ai = priorityIds.indexOf(a.id), bi = priorityIds.indexOf(b.id);
+    if (ai !== -1 && bi !== -1) return ai - bi;
+    if (ai !== -1) return -1;
+    if (bi !== -1) return 1;
+    return 0;
+  });
+  const displayCards = sortedCards.slice(0, 2);
+  document.getElementById('cardUtil').innerHTML =
+    displayCards.map(card => {
+      // Use current billing cycle: from last bill date to today
+      const today = new Date();
+      const billDay = card.billDate || 5;
+      let cycleStart = new Date(today.getFullYear(), today.getMonth(), billDay);
+      if (today.getDate() < billDay) {
+        cycleStart = new Date(today.getFullYear(), today.getMonth() - 1, billDay);
+      }
+      const cycleStartStr = cycleStart.toISOString().slice(0, 10);
+
+      const txOutstanding = db.transactions
+        .filter(t => t.card === card.id && t.date >= cycleStartStr && t.type !== 'emi-payment')
+        .reduce((sum, t) => {
+          if (t.type === 'expense') return sum + t.amount;
+          if (t.type === 'refund') return sum - t.amount;
+          if (t.type === 'payment') return sum - t.amount;
+          return sum;
+        }, 0);
+      // ALL pending EMI installments = what bank locks from credit limit
+      const emiOutstanding = (db.emis || [])
+        .filter(e => e.card === card.id && e.active && e.remaining > 0)
+        .reduce((sum, e) => sum + e.amount * e.remaining, 0);
+      const outstanding = Math.max(0, txOutstanding) + emiOutstanding;
+      const util = card.limit ? Math.min(100, (outstanding / card.limit) * 100) : 0;
+      const utilColor = util > 80 ? 'var(--red)' : util > 50 ? 'var(--orange)' : 'var(--accent)';
+      const available = Math.max(0, card.limit - outstanding);
+      return `
+        <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);">
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;">
+              <span style="font-size:13px;font-weight:600;color:var(--text);">${card.bank} ${card.name}</span>
+              <span style="font-size:11px;font-weight:700;color:${utilColor};">${util.toFixed(1)}%</span>
+            </div>
+            <div class="progress-bar" style="height:4px;margin-bottom:6px;">
+              <div class="progress-fill" style="width:${Math.min(util,100)}%;background:${utilColor};"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;">
+              <span style="font-size:11px;color:var(--text3);">Due: <span style="color:var(--red);font-weight:600;">${fmt(outstanding)}</span></span>
+              <span style="font-size:11px;color:var(--text3);">Avail: <span style="color:var(--green);font-weight:600;">${fmt(available)}</span></span>
+              ${emiOutstanding>0?`<span style="font-size:10px;color:var(--orange);">EMI: ${fmt(emiOutstanding)}</span>`:''}
+            </div>
+          </div>
+        </div>`;
+    }).join('') + `<div style="margin-top:8px;"><button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;" onclick="navigate('cards')">View All Cards →</button></div>`;
+
+}
+
+
+// ============================================================
+// TRANSACTIONS
+// ============================================================
+function renderTransactions() {
+  // Populate filters
+  const catSel = document.getElementById('txFilterCat');
+  const prevCat = catSel.value;
+  catSel.innerHTML = '<option value="">All Categories</option>' + ALL_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join('');
+  catSel.value = prevCat;
+
+  const cardSel = document.getElementById('txFilterCard');
+  const prevCard = cardSel.value;
+  cardSel.innerHTML = '<option value="">All Cards</option><option value="upi">UPI</option><option value="cash">Cash</option>' +
+    db.cards.map(c=>`<option value="${c.id}">${c.bank} ${c.name}</option>`).join('');
+  cardSel.value = prevCard;
+
+  const monthSel = document.getElementById('txFilterMonth');
+  const prevMonth = monthSel.value;
+  const months = [...new Set(db.transactions.map(t=>getTxMonth(t)))].sort().reverse();
+  monthSel.innerHTML = '<option value="">All Months</option>' + months.map(m=>`<option value="${m}">${monthLabel(m)}</option>`).join('');
+  monthSel.value = prevMonth;
+
+  const search = document.getElementById('txSearch').value.toLowerCase();
+  const catFilter = document.getElementById('txFilterCat').value;
+  const cardFilter = document.getElementById('txFilterCard').value;
+  const typeFilter = document.getElementById('txFilterType').value;
+  const monthFilter = document.getElementById('txFilterMonth').value;
+
+  let txs = db.transactions.filter(t => {
+    if (search && !t.merchant.toLowerCase().includes(search) && !(t.category||'').toLowerCase().includes(search)) return false;
+    if (catFilter && t.category !== catFilter) return false;
+    if (cardFilter) {
+      if (cardFilter === 'upi' && t.paymentMode !== 'UPI') return false;
+      if (cardFilter === 'cash' && t.paymentMode !== 'Cash') return false;
+      if (cardFilter !== 'upi' && cardFilter !== 'cash' && t.card !== cardFilter) return false;
+    }
+    if (typeFilter && t.type !== typeFilter) return false;
+    if (monthFilter && getTxMonth(t) !== monthFilter) return false;
+    return true;
+  });
+
+  document.getElementById('txCountLabel').textContent = `${txs.length} Transactions`;
+  document.getElementById('txList').innerHTML = txs.length ? renderTxItems(txs, true) : '<div class="empty-state"><div class="icon">📭</div><p>No transactions found</p></div>';
+}
+
+function renderTxItems(txs, showDate=false) {
+  // Group by date if showDate
+  if (!showDate) {
+    return txs.map(tx => renderSingleTxItem(tx, false)).join('');
+  }
+  // Group by date
+  const groups = {};
+  txs.forEach(tx => {
+    const d = tx.date || '';
+    if (!groups[d]) groups[d] = [];
+    groups[d].push(tx);
+  });
+  const sortedDates = Object.keys(groups).sort((a,b)=>b.localeCompare(a));
+  return sortedDates.map(date => {
+    const label = new Date(date).toLocaleDateString('en-IN',{weekday:'short', day:'numeric', month:'short', year:'numeric'});
+    const dayExpenses = groups[date].filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+    const dayRefunds  = groups[date].filter(t=>t.type==='refund').reduce((s,t)=>s+t.amount,0);
+    const dayNet = dayExpenses - dayRefunds;
+    const dayLabel = dayExpenses>0 && dayRefunds>0
+      ? `<span style="color:var(--red);">${fmt(dayExpenses)}</span><span style="color:var(--text3);margin:0 2px;"> · </span><span style="color:var(--green);">+${fmt(dayRefunds)}</span>`
+      : dayExpenses>0 ? `<span style="color:var(--text2);">${fmt(dayExpenses)}</span>`
+      : dayRefunds>0  ? `<span style="color:var(--green);">+${fmt(dayRefunds)}</span>` : '';
+    return `
+      <div style="margin-bottom:4px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px 4px;position:sticky;top:0;background:var(--surface);z-index:1;">
+          <span style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:0.06em;">${label}</span>
+          ${dayLabel?`<span style="font-size:11px;">${dayLabel}</span>`:''}
+        </div>
+        ${groups[date].map(tx => renderSingleTxItem(tx, false)).join('')}
+      </div>`;
+  }).join('');
+}
+
+function renderSingleTxItem(tx, showDate=false) {
+  const isRefund = tx.type === 'refund';
+  const isPayment = tx.type === 'payment';
+  const isEmiPay = tx.type === 'emi-payment';
+  const card = getCardById(tx.card);
+  const cardLabel = card ? `${card.bank} ${card.name}` : (tx.paymentMode === 'Cash' ? 'Cash' : 'UPI');
+  const cb = effectiveCashback(tx);
+  const catShort = (tx.category||'Other').split(' > ').pop();
+  const amtColor = isRefund || isPayment ? 'var(--green)' : isEmiPay ? 'var(--orange)' : 'var(--red)';
+  const amtSign = isRefund || isPayment ? '+' : isEmiPay ? '' : '-';
+  const iconBg = isRefund ? 'rgba(34,197,94,0.1)' : isPayment ? 'rgba(34,197,94,0.08)' : isEmiPay ? 'rgba(249,115,22,0.1)' : 'var(--surface2)';
+  const icon = isRefund ? '↩️' : isPayment ? '💸' : isEmiPay ? '📅' : getCatEmoji(tx.category);
+  return `<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.1s;" onmouseenter="this.style.background='var(--surface2)'" onmouseleave="this.style.background=''" onclick="showTxDetail('${tx.id}')">
+    <div style="width:34px;height:34px;border-radius:8px;background:${iconBg};display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;">${icon}</div>
+    <div style="flex:1;min-width:0;">
+      <div style="display:flex;align-items:center;gap:6px;">
+        <span style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;">${tx.merchant}</span>
+        ${isRefund ? '<span style="font-size:9px;background:rgba(34,197,94,0.15);color:var(--green);padding:1px 5px;border-radius:3px;flex-shrink:0;">REFUND</span>' : ''}
+        ${isPayment ? '<span style="font-size:9px;background:rgba(34,197,94,0.15);color:var(--green);padding:1px 5px;border-radius:3px;flex-shrink:0;">PAYMENT</span>' : ''}
+        ${isEmiPay ? '<span style="font-size:9px;background:rgba(249,115,22,0.15);color:var(--orange);padding:1px 5px;border-radius:3px;flex-shrink:0;">EMI</span>' : ''}
+      </div>
+      <div style="display:flex;align-items:center;gap:5px;margin-top:2px;flex-wrap:nowrap;overflow:hidden;">
+        <span style="font-size:10px;background:rgba(79,142,247,0.1);color:var(--accent);padding:1px 5px;border-radius:3px;white-space:nowrap;flex-shrink:0;">${catShort}</span>
+        <span style="font-size:10px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${cardLabel}</span>
+        ${cb > 0 ? `<span style="font-size:10px;color:var(--green);flex-shrink:0;">+${fmt(cb)}</span>` : ''}
+      </div>
+    </div>
+    <div style="text-align:right;flex-shrink:0;">
+      <div style="font-size:14px;font-weight:700;color:${amtColor};">${amtSign}${fmt(tx.amount)}</div>
+      ${isEmiPay ? `<div style="font-size:10px;color:var(--text3);">installment</div>` : ''}
+      ${cb > 0 ? `<div style="font-size:10px;color:var(--green);">cb: ${fmt(cb)}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function showTxDetail(id) {
+  const tx = db.transactions.find(t=>t.id===id);
+  if (!tx) return;
+  const card = getCardById(tx.card);
+  document.getElementById('txDetailBody').innerHTML = `
+    <div style="text-align:center;margin-bottom:20px;">
+      <div style="font-size:48px;margin-bottom:10px;">${tx.type==='refund'?'↩️':getCatEmoji(tx.category)}</div>
+      <div style="font-family:var(--font-head);font-size:24px;font-weight:700;color:${tx.type==='refund'?'var(--green)':'var(--red)'};">
+        ${tx.type==='refund'?'+':'-'}${fmt(tx.amount)}
+      </div>
+      <div style="font-size:16px;font-weight:600;margin-top:4px;">${tx.merchant}</div>
+      <div style="font-size:12px;color:var(--text3);margin-top:4px;">${new Date(tx.date).toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+      ${detailRow('Category', tx.category?.split(' > ').pop() || 'N/A')}
+      ${detailRow('Payment', card ? `${card.bank} ${card.name}` : (tx.paymentMode||'UPI'))}
+      ${detailRow('Cashback', effectiveCashback(tx) > 0 ? `${fmt(effectiveCashback(tx))} (${tx.cashbackPct}%)` : 'None', effectiveCashback(tx) > 0 ? 'green' : '')}
+      ${detailRow('Net Spend', fmt(Math.abs(tx.netSpend)))}
+      ${tx.rewardPoints ? detailRow('Reward Points', `+${tx.rewardPoints}`) : ''}
+      ${tx.tags?.length ? detailRow('Tags', tx.tags.join(', ')) : ''}
+    </div>
+    ${tx.notes ? `<div style="margin-top:12px;padding:10px 14px;background:var(--surface);border-radius:10px;font-size:13px;color:var(--text2);">📝 ${tx.notes}</div>` : ''}
+  `;
+  const isExpenseTx = tx.type === 'expense';
+  document.getElementById('txDetailFooter').innerHTML = `
+    <button class="btn btn-ghost" onclick="closeModal('txDetailModal')">Close</button>
+    ${isExpenseTx ? `<button class="btn btn-success btn-sm" onclick="closeModal('txDetailModal');openRefundModal('${tx.id}')">↩️ Refund</button>` : ''}
+    <button class="btn btn-ghost btn-sm" onclick="closeModal('txDetailModal');editTxById('${tx.id}')">✏️ Edit</button>
+    <button class="btn btn-danger btn-sm" onclick="deleteTx('${tx.id}')">🗑️ Delete</button>
+  `;
+  openModal('txDetailModal');
+}
+
+function detailRow(label, value, color='') {
+  return `<div style="background:var(--surface);border-radius:10px;padding:10px 14px;">
+    <div style="font-size:10px;color:var(--text3);margin-bottom:4px;">${label}</div>
+    <div style="font-size:13px;font-weight:600;${color?'color:var(--'+color+');':''}">${value}</div>
+  </div>`;
+}
+
+function deleteTx(id) {
+  db.transactions = db.transactions.filter(t=>t.id!==id);
+  saveDB();
+  closeModal('txDetailModal');
+  showToast('🗑️ Transaction deleted', 'red');
+  renderPage(currentPage);
+}
+
+function editTxById(id) {
+  const tx = db.transactions.find(t=>t.id===id);
+  if (tx) openAddModal(tx);
+}
+
+// ============================================================
+// REFUND FROM TRANSACTION
+// ============================================================
+function openRefundModal(txId) {
+  const tx = db.transactions.find(t => t.id === txId);
+  if (!tx) return;
+
+  const alreadyRefunded = db.transactions
+    .filter(r => r.type === 'refund' && r._linkedTxId === txId)
+    .reduce((s, r) => s + r.amount, 0);
+  const maxRefund = +(tx.amount - alreadyRefunded).toFixed(2);
+
+  if (maxRefund <= 0) { showToast('⚠️ Full refund already processed', 'red'); return; }
+
+  const origCb = tx._originalCashbackAmt !== undefined ? tx._originalCashbackAmt : (tx.cashbackAmt || 0);
+  const cbPct = tx.cashbackPct || 0;
+
+  document.getElementById('refundModalMerchant').textContent = tx.merchant;
+  document.getElementById('refundOriginalAmt').textContent = fmt(tx.amount);
+  document.getElementById('refundAlreadyRefunded').textContent = fmt(alreadyRefunded);
+  document.getElementById('refundMaxAmt').textContent = fmt(maxRefund);
+  document.getElementById('refundOrigCashback').textContent = fmt(origCb) + (cbPct > 0 ? ' (' + cbPct + '%)' : '');
+
+  document.getElementById('refundType').value = 'full';
+  document.getElementById('refundPartialGroup').style.display = 'none';
+  document.getElementById('refundAmount').value = maxRefund;
+  document.getElementById('refundDate').value = today();
+
+  document.getElementById('refundModal').dataset.txId = txId;
+  document.getElementById('refundModal').dataset.maxRefund = maxRefund;
+  document.getElementById('refundModal').dataset.origCb = origCb;
+  document.getElementById('refundModal').dataset.origAmt = tx.amount;
+
+  updateRefundPreview();
+  openModal('refundModal');
+}
+
+function onRefundTypeChange() {
+  const type = document.getElementById('refundType').value;
+  const maxRefund = parseFloat(document.getElementById('refundModal').dataset.maxRefund) || 0;
+  if (type === 'full') {
+    document.getElementById('refundPartialGroup').style.display = 'none';
+    document.getElementById('refundAmount').value = maxRefund;
+  } else {
+    document.getElementById('refundPartialGroup').style.display = 'block';
+    document.getElementById('refundAmount').value = '';
+  }
+  updateRefundPreview();
+}
+
+function updateRefundPreview() {
+  const modal = document.getElementById('refundModal');
+  const origAmt = parseFloat(modal.dataset.origAmt) || 0;
+  const origCb = parseFloat(modal.dataset.origCb) || 0;
+  const refundAmt = parseFloat(document.getElementById('refundAmount').value) || 0;
+
+  if (!origAmt || refundAmt <= 0) {
+    document.getElementById('refundCbLost').textContent = '—';
+    document.getElementById('refundCbPreview').textContent = '—';
+    document.getElementById('refundNetPreview').textContent = '—';
+    return;
+  }
+
+  const cbLost = +(origCb * (refundAmt / origAmt)).toFixed(2);
+  const netCb = +(origCb - cbLost).toFixed(2);
+
+  document.getElementById('refundCbLost').textContent = fmt(cbLost);
+  document.getElementById('refundCbPreview').textContent = fmt(netCb);
+  document.getElementById('refundNetPreview').textContent = fmt(origAmt - refundAmt);
+}
+
+function saveRefund() {
+  const modal = document.getElementById('refundModal');
+  const txId = modal.dataset.txId;
+  const maxRefund = parseFloat(modal.dataset.maxRefund) || 0;
+  const origAmt = parseFloat(modal.dataset.origAmt) || 0;
+  const origCb = parseFloat(modal.dataset.origCb) || 0;
+
+  const refundAmt = parseFloat(document.getElementById('refundAmount').value);
+  const refundDate = document.getElementById('refundDate').value || today();
+
+  if (!refundAmt || refundAmt <= 0) { showToast('❌ Enter refund amount', 'red'); return; }
+  if (refundAmt > maxRefund + 0.01) { showToast('❌ Max refund is ' + fmt(maxRefund), 'red'); return; }
+
+  const originalTx = db.transactions.find(t => t.id === txId);
+  if (!originalTx) return;
+
+  if (originalTx._originalCashbackAmt === undefined) {
+    originalTx._originalCashbackAmt = originalTx.cashbackAmt || 0;
+  }
+
+  const cbLost = +(origCb * (refundAmt / origAmt)).toFixed(2);
+
+  const refundTx = {
+    id: uid(),
+    date: refundDate,
+    merchant: originalTx.merchant,
+    amount: refundAmt,
+    category: originalTx.category,
+    card: originalTx.card,
+    paymentMode: originalTx.paymentMode,
+    type: 'refund',
+    cashbackPct: 0,
+    cashbackAmt: 0,
+    netSpend: -refundAmt,
+    notes: 'Refund for ' + originalTx.merchant + ' (orig: ' + fmt(origAmt) + ')',
+    tags: ['refund'],
+    rewardPoints: 0,
+    _linkedTxId: txId,
+    _cbLost: cbLost
+  };
+
+  db.transactions.unshift(refundTx);
+
+  // Recalculate parent cashback after all refunds
+  const totalCbLost = db.transactions
+    .filter(r => r.type === 'refund' && r._linkedTxId === txId)
+    .reduce((s, r) => s + (r._cbLost || 0), 0);
+
+  originalTx.cashbackAmt = Math.max(0, +(originalTx._originalCashbackAmt - totalCbLost).toFixed(2));
+  originalTx.netSpend = +(originalTx.amount - originalTx.cashbackAmt).toFixed(2);
+
+  saveDB();
+  closeModal('refundModal');
+  showToast('✅ Refund ' + fmt(refundAmt) + ' added · Cashback adjusted -' + fmt(cbLost), 'green');
+  renderPage(currentPage);
+}
+
+// ============================================================
+// ANALYTICS
+// ============================================================
+let analyticsTab = 'monthly';
+
+function switchAnalyticsTab(tab, el) {
+  analyticsTab = tab;
+  const analyticsTabs = document.querySelectorAll('#page-analytics .tab-btn');
+  analyticsTabs.forEach(b => b.classList.remove('active'));
+  if (el) el.classList.add('active');
+  renderAnalytics(tab);
+}
+
+function renderAnalytics(tab) {
+  window._analyticsTab = tab;
+  const container = document.getElementById('analyticsContent');
+  if (tab === 'monthly') {
+    const months = getMonthlyData();
+    container.innerHTML = `
+      <div class="grid-3">
+        ${months.slice(-3).map(m => `
+          <div class="stat-card">
+            <div class="label">${monthLabel(m.month)}</div>
+            <div class="value text-red">${fmt(m.spend)}</div>
+            <div class="sub">Cashback: <span class="text-green">${fmt(m.cashback)}</span></div>
+          </div>
+        `).join('')}
+      </div>
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">Monthly Spend Trend</span></div>
+        <div class="panel-body">
+          ${renderBarChart(months)}
+        </div>
+      </div>
+      <div class="panel" style="margin-top:20px;">
+        <div class="panel-header"><span class="panel-title">Monthly Breakdown</span></div>
+        <div class="panel-body">
+          <div class="tx-list">
+            ${months.reverse().map(m => `
+              <div class="tx-item" style="position:relative;">
+                <div class="tx-info"><div class="tx-merchant">${monthLabel(m.month)}</div><div class="tx-meta"><span>${m.count} transactions</span><span class="text-green">Cashback: ${fmt(m.cashback)}</span><span>Refunds: ${fmt(m.refunds)}</span></div></div>
+                <div class="tx-right"><div class="tx-amount debit">${fmt(m.spend)}</div><div class="tx-cashback">Net: ${fmt(m.net)}</div></div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>`;
+  } else if (tab === 'categories') {
+    const cur = nowMonth();
+    const txs = db.transactions.filter(t=>t.type==='expense');
+    const catMap = {};
+    txs.forEach(t => { catMap[t.category||'Other'] = (catMap[t.category||'Other']||0)+t.amount; });
+    const sorted = Object.entries(catMap).sort((a,b)=>b[1]-a[1]);
+    const total = sorted.reduce((s,[,v])=>s+v,0)||1;
+    const colors = ['#4f8ef7','#22c55e','#f97316','#a855f7','#06b6d4','#eab308','#ec4899','#ef4444'];
+    container.innerHTML = `
+      <div class="panel">
+        <div class="panel-header"><span class="panel-title">All-Time Category Breakdown</span></div>
+        <div class="panel-body">
+          ${sorted.map(([cat,amt],i) => `
+            <div class="cat-row">
+              <div class="cat-label">${getCatEmoji(cat)} ${cat.split(' > ').pop()}</div>
+              <div class="cat-bar"><div class="progress-bar"><div class="progress-fill" style="width:${amt/total*100}%;background:${colors[i%colors.length]};"></div></div></div>
+              <div class="cat-amount">${fmt(amt)}</div>
+            </div>
+          `).join('')}
+        </div>
+      </div>`;
+  } else {
+    // Cards
+    container.innerHTML = `<div class="grid-2">
+      ${db.cards.map(card => {
+        const txs = db.transactions.filter(t=>t.card===card.id && t.type==='expense');
+        const spend = txs.reduce((s,t)=>s+t.amount,0);
+        const cb = txs.reduce((s,t)=>s+effectiveCashback(t),0);
+        const rp = txs.reduce((s,t)=>s+(t.rewardPoints||0),0);
+        return `<div class="stat-card">
+          <div class="label">${card.bank} ${card.name}</div>
+          <div class="value">${fmt(spend)}</div>
+          <div class="sub">Cashback: <span class="text-green">${fmt(cb)}</span> · Points: ${rp}</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+}
+
+function getMonthlyData() {
+  const monthMap = {};
+  db.transactions.forEach(t => {
+    const m = getTxMonth(t);
+    if (!monthMap[m]) monthMap[m] = { month:m, spend:0, cashback:0, refunds:0, net:0, count:0 };
+    if (t.type==='expense') {
+      monthMap[m].spend += t.amount;
+      monthMap[m].cashback += effectiveCashback(t);
+      monthMap[m].count++;
+    } else {
+      monthMap[m].refunds += t.amount;
+    }
+    monthMap[m].net = monthMap[m].spend - monthMap[m].refunds - monthMap[m].cashback;
+  });
+  return Object.values(monthMap).sort((a,b)=>a.month.localeCompare(b.month));
+}
+
+function renderBarChart(months) {
+  if (!months.length) return '<div class="empty-state"><p>No data</p></div>';
+  const max = Math.max(...months.map(m=>m.spend)) || 1;
+  return `<div style="display:flex;align-items:flex-end;gap:12px;height:160px;padding:0 4px;">
+    ${months.slice(-8).map(m => `
+      <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;height:100%;">
+        <div style="flex:1;width:100%;display:flex;align-items:flex-end;justify-content:center;">
+          <div style="width:100%;background:linear-gradient(180deg,var(--accent),var(--accent2));border-radius:6px 6px 0 0;height:${m.spend/max*100}%;min-height:4px;transition:height 0.5s;"></div>
+        </div>
+        <div style="font-size:9px;color:var(--text3);text-align:center;">${monthLabel(m.month).split(' ')[0]}</div>
+        <div style="font-size:9px;color:var(--text2);font-weight:600;">${fmt(m.spend).replace('₹','₹')}</div>
+      </div>
+    `).join('')}
+  </div>`;
+}
+
+// ============================================================
+// CREDIT CARDS
+// ============================================================
+function renderCards() {
+  syncStatementCycles();
+  const cur = nowMonth();
+  const today = new Date();
+  const refundMap = buildRefundMap();
+  const curExpenses = db.transactions.filter(t=>getTxMonth(t)===cur && t.type==='expense' && !(t.tags&&t.tags.includes('emi-auto')));
+  const curRefunds  = db.transactions.filter(t=>getTxMonth(t)===cur && t.type==='refund');
+  document.getElementById('cardsGrid').innerHTML = db.cards.map(card => {
+    const grossSpend = curExpenses.filter(t=>t.card===card.id).reduce((s,t)=>s+t.amount,0);
+    const monthRefund = curRefunds.filter(t=>t.card===card.id).reduce((s,t)=>s+t.amount,0);
+    const spend = Math.max(0, grossSpend - monthRefund);
+    const cb = curExpenses.filter(t=>t.card===card.id).reduce((s,t)=>s+effectiveCashback(t,refundMap),0);
+
+    // Billing cycle outstanding (bill date to today)
+    const billDay = card.billDate || 5;
+    let cycleStart = new Date(today.getFullYear(), today.getMonth(), billDay);
+    if (today.getDate() < billDay) cycleStart = new Date(today.getFullYear(), today.getMonth()-1, billDay);
+    const cycleStartStr = cycleStart.toISOString().slice(0,10);
+    const cycleOutstanding = db.transactions
+      .filter(t => t.card === card.id && t.date >= cycleStartStr && t.type !== 'emi-payment')
+      .reduce((sum, t) => {
+        if (t.type==='expense') return sum + t.amount;
+        if (t.type==='refund'||t.type==='payment') return sum - t.amount;
+        return sum;
+      }, 0);
+    // EMI: ALL remaining = total locked by bank in credit limit
+    const activeEmisOnCard = (db.emis||[]).filter(e=>e.card===card.id&&e.active&&e.remaining>0);
+    const emiTotalLocked = activeEmisOnCard.reduce((s,e)=>s+e.amount*e.remaining,0);
+    const emiNextInstallment = activeEmisOnCard.reduce((s,e)=>s+e.amount,0);
+    const curMonthStr = nowMonth();
+    const emiPaidThisMonth = activeEmisOnCard.reduce((s,e)=>{
+      const paid = db.transactions.some(t=>
+        (t._emiId===e.id||(t.tags&&t.tags.includes('emi-auto')&&t.merchant===`EMI - ${e.name}`))
+        && t.date && t.date.startsWith(curMonthStr)
+      );
+      return s + (paid ? e.amount : 0);
+    },0);
+    const emiPendingThisMonth = emiNextInstallment - emiPaidThisMonth;
+    const totalOutstanding = Math.max(0, cycleOutstanding) + emiTotalLocked;
+    const util = card.limit ? Math.min(100,totalOutstanding/card.limit*100) : 0;
+    const utilColor = util>80?'var(--red)':util>50?'var(--orange)':'var(--green)';
+    const colors = CARD_COLORS[card.color||'blue'];
+    const dueDay = card.dueDate;
+    const snap = getCardSnapshot(card.id);
+    const stmtAmt = snap.latestClosed ? snap.latestClosed.remaining : 0;
+    const minDueAmt = snap.latestClosed ? snap.latestClosed.minDue : 0;
+    const daysLeft = snap.daysRemaining;
+    const stmtStatus = snap.latestClosed ? snap.latestClosed.status : null;
+    const interestAccrued = snap.latestClosed ? (snap.latestClosed.interestAccrued||0) : 0;
+    const stmtColor = stmtStatus === 'overdue' ? 'var(--red)' : stmtStatus === 'paid' ? 'var(--green)' : 'var(--orange)';
+    const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const nowD = new Date();
+    const nextEmiLabel = emiTotalLocked > 0 ? (emiPendingThisMonth > 0
+      ? MONTH_NAMES[nowD.getMonth()] + ' — ' + fmt(emiPendingThisMonth) + ' pending'
+      : MONTH_NAMES[(nowD.getMonth()+1)%12] + ' — ' + fmt(emiNextInstallment) + ' upcoming') : '';
+    return `<div>
+      <div class="cc-card" style="--c1:${colors[0]};--c2:${colors[1]};margin-bottom:16px;">
+        <div class="cc-bank">${card.bank}${card.autoPay&&card.autoPay!=='none'?` <span style="font-size:9px;background:rgba(34,197,94,0.2);color:var(--green);padding:2px 6px;border-radius:10px;vertical-align:middle;">AUTO-PAY: ${card.autoPay.toUpperCase()}</span>`:''}</div>
+        <div class="cc-name">${card.name}${card.last4?` · •• ${card.last4}`:''}</div>
+        <div class="cc-limit">
+          <div class="l">CREDIT LIMIT</div>
+          <div class="v">${fmt(card.limit)}</div>
+        </div>
+        <div class="cc-util">
+          <div class="l">AVAILABLE</div>
+          <div class="v">${fmt(Math.max(0, card.limit - totalOutstanding))}</div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+            <div><div style="font-size:10px;color:var(--text3);">This Month Spend</div><div style="font-size:16px;font-weight:700;color:var(--red);">${fmt(grossSpend)}${monthRefund>0?`<span style="font-size:11px;color:var(--green);font-weight:500;margin-left:4px;">-${fmt(monthRefund)}</span>`:''}</div></div>
+            <div><div style="font-size:10px;color:var(--text3);">Cashback Earned</div><div style="font-size:16px;font-weight:700;color:var(--green);">${fmt(cb)}</div></div>
+            <div><div style="font-size:10px;color:var(--text3);">Bill Date</div><div style="font-size:14px;font-weight:600;">${billDay}th</div></div>
+            <div><div style="font-size:10px;color:var(--text3);">Due Date</div><div style="font-size:14px;font-weight:600;">${dueDay}th</div></div>
+            ${emiTotalLocked > 0 ? `<div style="grid-column:1/-1;padding:10px;background:rgba(249,115,22,0.07);border-radius:6px;border:1px solid rgba(249,115,22,0.15);">
+              <div style="font-size:10px;color:var(--text3);margin-bottom:4px;">EMI INSTALLMENT</div>
+              <div style="font-size:14px;font-weight:700;color:var(--orange);">${nextEmiLabel}</div>
+              <div style="font-size:10px;color:var(--text3);margin-top:3px;">Bank locked: <span style="color:var(--orange);font-weight:600;">${fmt(emiTotalLocked)}</span> (${activeEmisOnCard.length} EMI · ${activeEmisOnCard.reduce((s,e)=>s+e.remaining,0)} installments left)</div>
+            </div>` : ''}
+            ${card.points ? `<div><div style="font-size:10px;color:var(--text3);">Reward Points</div><div style="font-size:14px;font-weight:600;color:var(--purple);">${card.points.toLocaleString()}</div></div>` : ''}
+          </div>
+          ${stmtStatus ? `<div style="padding:10px;background:rgba(255,255,255,0.03);border-radius:6px;border:1px solid var(--border);margin-bottom:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+              <span style="font-size:10px;color:var(--text3);text-transform:uppercase;">Latest Statement</span>
+              <span style="font-size:10px;font-weight:700;color:${stmtColor};text-transform:capitalize;">${stmtStatus}</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+              <div><div style="font-size:10px;color:var(--text3);">Amount Due</div><div style="font-size:14px;font-weight:700;color:${stmtColor};">${fmt(stmtAmt)}</div></div>
+              <div><div style="font-size:10px;color:var(--text3);">Min Due</div><div style="font-size:14px;font-weight:600;">${fmt(minDueAmt)}</div></div>
+              <div><div style="font-size:10px;color:var(--text3);">Days Left</div><div style="font-size:14px;font-weight:600;color:${daysLeft!==null&&daysLeft<0?'var(--red)':'var(--text)'};">${daysLeft!==null?daysLeft:'—'}</div></div>
+            </div>
+            ${interestAccrued>0?`<div style="margin-top:8px;font-size:11px;color:var(--red);">⚠️ Overdue interest accrued (est.): <strong>${fmt(interestAccrued)}</strong></div>`:''}
+          </div>` : ''}
+          <div style="margin-bottom:6px;display:flex;justify-content:space-between;font-size:12px;">
+            <span>Utilization</span><span style="color:${utilColor};font-weight:600;">${fmtPct(util)}</span>
+          </div>
+          <div class="progress-bar" style="margin-bottom:4px;"><div class="progress-fill" style="width:${util}%;background:${utilColor};"></div></div>
+          ${emiTotalLocked>0?`<div style="font-size:10px;color:var(--text3);margin-bottom:8px;">Spend: <span style="color:var(--red);">${fmt(Math.max(0,cycleOutstanding))}</span> + EMI locked: <span style="color:var(--orange);">${fmt(emiTotalLocked)}</span></div>`:''}
+          <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
+            ${stmtAmt>0?`<button class="btn btn-primary btn-sm" onclick="openPayBillModal('${card.id}')">💳 Pay Bill</button>`:''}
+            <button class="btn btn-ghost btn-sm" onclick="openStatementHistory('${card.id}')">📜 Statements</button>
+            <button class="btn btn-ghost btn-sm" onclick="openUnbilledTx('${card.id}')">🧾 Unbilled</button>
+            <button class="btn btn-ghost btn-sm" onclick="editCard('${card.id}')">✏️ Edit</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteCard('${card.id}')">🗑️</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function openPayBillModal(cardId) {
+  const card = getCardById(cardId); if (!card) return;
+  syncStatementCycles();
+  const snap = getCardSnapshot(cardId);
+  document.getElementById('pbCardId').value = cardId;
+  document.getElementById('pbCardLabel').textContent = card.bank + ' ' + card.name;
+  document.getElementById('pbMinDue').textContent = fmt(snap.latestClosed ? snap.latestClosed.minDue : 0);
+  document.getElementById('pbStatementAmt').textContent = fmt(snap.latestClosed ? snap.latestClosed.remaining : 0);
+  document.getElementById('pbTotalOutstanding').textContent = fmt(snap.totalOutstanding);
+  document.getElementById('pbAmount').value = '';
+  openModal('payBillModal');
+}
+
+function fillPayBillAmount(kind) {
+  const cardId = document.getElementById('pbCardId').value;
+  const snap = getCardSnapshot(cardId);
+  let v = 0;
+  if (kind === 'min') v = snap.latestClosed ? snap.latestClosed.minDue : 0;
+  if (kind === 'statement') v = snap.latestClosed ? snap.latestClosed.remaining : 0;
+  if (kind === 'total') v = snap.totalOutstanding;
+  document.getElementById('pbAmount').value = v ? Math.round(v) : 0;
+}
+
+function submitPayBill() {
+  const cardId = document.getElementById('pbCardId').value;
+  const amount = parseFloat(document.getElementById('pbAmount').value);
+  if (!amount || amount <= 0) { showToast('❌ Enter a valid amount', 'red'); return; }
+  const card = getCardById(cardId); if (!card) return;
+  const tx = {
+    id: uid(), date: toDateStr(new Date()),
+    merchant: 'Card Bill Payment', amount,
+    category: 'Financial > Credit Card Payment',
+    card: cardId, paymentMode: 'Bank Transfer',
+    type: 'payment', cashbackPct: 0, cashbackAmt: 0, _originalCashbackAmt: 0, netSpend: 0,
+    notes: `Bill payment — ${card.bank} ${card.name}`,
+    tags: ['card-bill-payment'], rewardPoints: 0
+  };
+  db.transactions.unshift(tx);
+  saveDB();
+  closeModal('payBillModal');
+  syncStatementCycles();
+  showToast(`✅ Payment of ${fmt(amount)} recorded`, 'green');
+  renderCards();
+}
+
+function openUnbilledTx(cardId) {
+  syncStatementCycles();
+  const card = getCardById(cardId); if (!card) return;
+  const snap = getCardSnapshot(cardId);
+  document.getElementById('unbilledCardLabel').textContent = card.bank + ' ' + card.name;
+  if (!snap.open) { document.getElementById('unbilledList').innerHTML = ''; openModal('unbilledModal'); return; }
+  document.getElementById('unbilledWindow').textContent = `${snap.open.periodStart} → today · Closes ${snap.open.periodEnd}`;
+  const txs = db.transactions
+    .filter(t => t.card === cardId && (t.type === 'expense' || t.type === 'refund') && t.date >= snap.open.periodStart)
+    .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  document.getElementById('unbilledList').innerHTML = txs.length ? txs.map(t => `
+    <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px;">
+      <div>
+        <div style="font-weight:600;">${t.merchant}</div>
+        <div style="font-size:11px;color:var(--text3);">${t.date} · ${(t.category||'').split(' > ').pop()}</div>
+      </div>
+      <div style="font-weight:700;color:${t.type==='refund'?'var(--green)':'var(--red)'};">${t.type==='refund'?'+':'-'}${fmt(t.amount)}</div>
+    </div>`).join('') : '<div style="padding:16px;text-align:center;color:var(--text3);">No unbilled transactions this cycle.</div>';
+  openModal('unbilledModal');
+}
+
+function openStatementHistory(cardId) {
+  syncStatementCycles();
+  const card = getCardById(cardId); if (!card) return;
+  document.getElementById('histCardLabel').textContent = card.bank + ' ' + card.name;
+  const cycles = getStatementHistory(cardId);
+  const badgeColor = s => ({ paid: 'var(--green)', closed: 'var(--cyan)', overdue: 'var(--red)' }[s] || 'var(--text3)');
+  document.getElementById('histBody').innerHTML = cycles.length ? cycles.map(c => `
+    <tr style="border-top:1px solid var(--border);">
+      <td style="padding:8px 6px;">${c.periodStart} → ${c.periodEnd}</td>
+      <td style="padding:8px 6px;">${fmt(c.statementAmount)}</td>
+      <td style="padding:8px 6px;color:var(--green);">${fmt(c.paid)}</td>
+      <td style="padding:8px 6px;color:var(--red);">${fmt(c.remaining)}</td>
+      <td style="padding:8px 6px;color:var(--red);">${c.interestAccrued?fmt(c.interestAccrued):'—'}</td>
+      <td style="padding:8px 6px;">${c.dueDate}</td>
+      <td style="padding:8px 6px;"><span style="color:${badgeColor(c.status)};font-weight:600;text-transform:capitalize;">${c.status}</span></td>
+    </tr>`).join('') : '<tr><td colspan="7" style="padding:16px;text-align:center;color:var(--text3);">No closed statements yet.</td></tr>';
+  openModal('statementHistoryModal');
+}
+
+function openCardModal(card) {
+  if (card) {
+    document.getElementById('cBank').value = card.bank;
+    document.getElementById('cName').value = card.name;
+    document.getElementById('cLast4').value = card.last4 || '';
+    document.getElementById('cLimit').value = card.limit;
+    document.getElementById('cBillDate').value = card.billDate;
+    document.getElementById('cDueDate').value = card.dueDate;
+    document.getElementById('cPoints').value = card.points || 0;
+    document.getElementById('cCashback').value = card.cashbackPct;
+    document.getElementById('cOnlineCashback').value = card.onlineCashbackPct || card.cashbackPct || 0;
+    document.getElementById('cColor').value = card.color || 'blue';
+    document.getElementById('cCashbackToCard').checked = card.cashbackToCard || false;
+    document.getElementById('cMinDuePct').value = card.minDuePct !== undefined ? card.minDuePct : 5;
+    document.getElementById('cApr').value = card.interestRatePctApr !== undefined ? card.interestRatePctApr : 42;
+    document.getElementById('cWeekendRollover').value = card.weekendRollover || 'none';
+    document.getElementById('cAutoPay').value = card.autoPay || 'none';
+    document.getElementById('cAutoPayAmount').value = card.autoPayAmount || '';
+    document.getElementById('cAutoPayAmountGroup').style.display = (card.autoPay === 'fixed') ? 'block' : 'none';
+    openModal('cardModal');
+    document.getElementById('cardModal').dataset.editId = card.id;
+  } else {
+    ['cBank','cName','cLast4','cLimit','cBillDate','cDueDate','cPoints','cCashback','cOnlineCashback','cMinDuePct','cApr','cAutoPayAmount'].forEach(id=>document.getElementById(id).value='');
+    document.getElementById('cCashbackToCard').checked = false;
+    document.getElementById('cWeekendRollover').value = 'none';
+    document.getElementById('cAutoPay').value = 'none';
+    document.getElementById('cAutoPayAmountGroup').style.display = 'none';
+    document.getElementById('cardModal').dataset.editId = '';
+    openModal('cardModal');
+  }
+}
+
+function editCard(id) { const c = getCardById(id); if(c) openCardModal(c); }
+
+function saveCard() {
+  const bank = document.getElementById('cBank').value.trim();
+  const name = document.getElementById('cName').value.trim();
+  if (!bank || !name) { showToast('❌ Bank and Name required', 'red'); return; }
+  const editId = document.getElementById('cardModal').dataset.editId;
+  const card = {
+    id: editId || uid(),
+    bank, name,
+    last4: document.getElementById('cLast4').value.trim(),
+    limit: parseFloat(document.getElementById('cLimit').value)||0,
+    billDate: parseInt(document.getElementById('cBillDate').value)||17,
+    dueDate: parseInt(document.getElementById('cDueDate').value)||7,
+    points: parseInt(document.getElementById('cPoints').value)||0,
+    cashbackPct: parseFloat(document.getElementById('cCashback').value)||0,
+    onlineCashbackPct: parseFloat(document.getElementById('cOnlineCashback')?.value)||parseFloat(document.getElementById('cCashback').value)||0,
+    color: document.getElementById('cColor').value,
+    cashbackToCard: document.getElementById('cCashbackToCard').checked,
+    minDuePct: parseFloat(document.getElementById('cMinDuePct').value)||5,
+    interestRatePctApr: parseFloat(document.getElementById('cApr').value)||42,
+    weekendRollover: document.getElementById('cWeekendRollover').value || 'none',
+    autoPay: document.getElementById('cAutoPay').value || 'none',
+    autoPayAmount: parseFloat(document.getElementById('cAutoPayAmount').value)||0,
+    outstanding: 0
+  };
+  if (editId) { const i=db.cards.findIndex(c=>c.id===editId); if(i>=0) db.cards[i]=card; }
+  else db.cards.push(card);
+  saveDB(); closeModal('cardModal');
+  showToast('✅ Card saved', 'green');
+  syncStatementCycles();
+  renderCards();
+}
+
+function deleteCard(id) {
+  const cardName = (db.cards.find(c=>c.id===id)||{}).name || id;
+  const txCount = db.transactions.filter(t=>t.card===id).length;
+  const emiCount = db.emis.filter(e=>e.card===id).length;
+  if (!confirm(`Delete "${cardName}"?\n\n${txCount} transactions and ${emiCount} EMIs will be unlinked. This cannot be undone.`)) return;
+  db.transactions.forEach(t => { if(t.card===id){ t.card=''; t.paymentMode='UPI'; } });
+  db.emis.forEach(e => { if(e.card===id) e.card=''; });
+  if(db.fixedSpends) db.fixedSpends.forEach(f => { if(f.card===id) f.card=''; });
+  db.cards = db.cards.filter(c=>c.id!==id);
+  saveDB(); renderCards();
+  showToast(`🗑️ Card deleted. ${txCount} transactions unlinked.`, 'red');
+}
+
+// ============================================================
+// EMI
+// ============================================================
+function renderEmis() {
+  const active = db.emis.filter(e=>e.active && e.remaining>0);
+  const done = db.emis.filter(e=>!e.active || e.remaining<=0);
+  const totalEmi = active.reduce((s,e)=>s+e.amount,0);
+  const totalRem = active.reduce((s,e)=>s+e.amount*e.remaining,0);
+  document.getElementById('totalEmiAmt').textContent = fmt(totalEmi);
+  document.getElementById('totalEmiSub').textContent = `${active.length} active EMI${active.length!==1?'s':''}`;
+  document.getElementById('totalEmiRemaining').textContent = fmt(totalRem);
+
+  document.getElementById('emiList').innerHTML = active.length ? active.map(e => emiCard(e)).join('') : '<div class="empty-state"><p>No active EMIs</p></div>';
+  document.getElementById('emiCompleted').innerHTML = done.length ? done.map(e => emiCard(e,true)).join('') : '<div class="empty-state"><p>No completed EMIs</p></div>';
+
+  // Populate EMI card dropdown
+  const eCard = document.getElementById('eCard');
+  if (eCard) eCard.innerHTML = '<option value="">No card</option>' + db.cards.map(c=>`<option value="${c.id}">${c.bank} ${c.name}</option>`).join('');
+}
+
+function emiCard(e, done=false) {
+  const card = getCardById(e.card);
+  const paid = e.tenure - e.remaining;
+  const pct = e.tenure ? paid/e.tenure*100 : 100;
+  const cardLabel = card ? `${card.bank} ${card.name}` : 'No card';
+  const EMIM = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const nowD3 = new Date();
+  const curM3 = nowMonth();
+  // Check if this month already paid
+  const thisMonthPaid = !done && db.transactions.some(t=>
+    (t._emiId===e.id||(t.tags&&t.tags.includes('emi-auto')&&t.merchant===`EMI - ${e.name}`))
+    && t.date && t.date.startsWith(curM3)
+  );
+  const nextM3 = (nowD3.getMonth()+2)>12?1:(nowD3.getMonth()+2);
+  const nextMonthName3 = EMIM[(nowD3.getMonth()+1)%12];
+  const curMonthName3 = EMIM[nowD3.getMonth()];
+  const emiStatusBadge = thisMonthPaid
+    ? `<span style="font-size:10px;background:rgba(34,197,94,0.15);color:var(--green);padding:2px 8px;border-radius:3px;font-weight:600;">✓ ${curMonthName3} Paid · Next: ${nextMonthName3}</span>`
+    : `<span style="font-size:10px;background:rgba(249,115,22,0.15);color:var(--orange);padding:2px 8px;border-radius:3px;font-weight:600;">${curMonthName3} Pending</span>`;
+  return `<div class="emi-card" style="${done?'opacity:0.6;':''}">
+    <div class="emi-icon">${done?'✅':'📦'}</div>
+    <div class="emi-info">
+      <div class="emi-name">${e.name} ${done?'<span class="badge badge-green">Completed</span>':emiStatusBadge}</div>
+      <div class="emi-meta">${cardLabel} · ${e.remaining}/${e.tenure} months left · ${fmt(e.amount*e.remaining)} locked</div>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">
+        <div class="progress-bar" style="flex:1;"><div class="progress-fill" style="width:${pct}%;background:${done?'var(--green)':'var(--orange)'};"></div></div>
+        <span style="font-size:11px;color:var(--text3);">${paid}/${e.tenure}</span>
+      </div>
+    </div>
+    <div class="emi-right">
+      <div class="emi-amount">${fmt(e.amount)}/mo</div>
+      <div class="emi-remaining">${done?'Completed':fmt(e.amount*e.remaining)+' left'}</div>
+      ${!done?`<div style="display:flex;gap:4px;margin-top:8px;flex-wrap:wrap;">
+        ${thisMonthPaid
+          ? `<button class="btn btn-ghost btn-sm" style="opacity:0.5;cursor:default;" disabled>✓ ${curMonthName3} Paid</button>`
+          : `<button class="btn btn-success btn-sm" onclick="emiPay('${e.id}')">✓ Pay ${curMonthName3}</button>`
+        }
+        <button class="btn btn-ghost btn-sm" onclick="openEditEmiModal('${e.id}')">✏️</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteEmi('${e.id}')">🗑️</button>
+      </div>`:''}
+    </div>
+  </div>`;
+}
+
+let editingEmiId = null;
+function openEditEmiModal(id) {
+  const e = db.emis.find(em=>em.id===id);
+  if (!e) return;
+  editingEmiId = id;
+  document.getElementById('eName').value = e.name;
+  document.getElementById('eAmount').value = e.amount;
+  document.getElementById('eTenure').value = e.tenure;
+  document.getElementById('eRemaining').value = e.remaining;
+  document.getElementById('eStart').value = e.startDate || today();
+  const eCard = document.getElementById('eCard');
+  eCard.innerHTML = '<option value="">No card</option>' + db.cards.map(c=>`<option value="${c.id}">${c.bank} ${c.name}</option>`).join('');
+  eCard.value = e.card || '';
+  openModal('emiModal');
+}
+
+function openEmiModal() {
+  editingEmiId = null;
+  ['eName','eAmount','eTenure','eRemaining'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('eStart').value = today();
+  const eCard = document.getElementById('eCard');
+  eCard.innerHTML = '<option value="">No card</option>' + db.cards.map(c=>`<option value="${c.id}">${c.bank} ${c.name}</option>`).join('');
+  openModal('emiModal');
+}
+
+function saveEmi() {
+  const name = document.getElementById('eName').value.trim();
+  const amount = parseFloat(document.getElementById('eAmount').value);
+  if (!name || !amount) { showToast('❌ Name and amount required', 'red'); return; }
+  const tenure = Math.max(1, Math.min(360, parseInt(document.getElementById('eTenure').value)||6));
+  const remaining = Math.max(0, Math.min(tenure, parseInt(document.getElementById('eRemaining').value)||tenure));
+  const emiData = {
+    name, amount,
+    tenure,
+    remaining,
+    card: document.getElementById('eCard').value,
+    startDate: document.getElementById('eStart').value || today(),
+    active: remaining > 0
+  };
+  if (editingEmiId) {
+    const idx = db.emis.findIndex(e=>e.id===editingEmiId);
+    if (idx>=0) db.emis[idx] = { ...db.emis[idx], ...emiData };
+    editingEmiId = null;
+    showToast('✅ EMI updated', 'green');
+  } else {
+    db.emis.push({ id: uid(), ...emiData });
+    showToast('✅ EMI added', 'green');
+  }
+  saveDB(); closeModal('emiModal');
+  renderEmis();
+}
+
+function emiPay(id) {
+  const e = db.emis.find(em=>em.id===id);
+  if (!e) return;
+  const curM = nowMonth();
+  // Check if already paid this month
+  const alreadyPaidThisMonth = db.transactions.some(t =>
+    (t._emiId===e.id || (t.tags&&t.tags.includes('emi-auto')&&t.merchant===`EMI - ${e.name}`))
+    && t.date && t.date.startsWith(curM)
+  );
+  if (alreadyPaidThisMonth) {
+    showToast('⚠️ This EMI is already paid for this month', 'orange');
+    return;
+  }
+  const paidInstallment = e.tenure - e.remaining + 1;
+  e.remaining = Math.max(0, e.remaining-1);
+  if (e.remaining === 0) e.active = false;
+  // type 'emi-payment': reduces outstanding for this month only (not all future)
+  const tx = {
+    id: uid(), date: today(),
+    merchant: `EMI Payment - ${e.name}`,
+    amount: e.amount,
+    category: 'Financial > EMI',
+    card: e.card, paymentMode: e.card ? 'Credit Card' : 'UPI',
+    type: 'emi-payment', cashbackPct: 0, cashbackAmt: 0, netSpend: 0,
+    notes: `EMI payment ${paidInstallment}/${e.tenure}`,
+    tags: ['emi', 'emi-auto'], _emiId: e.id, rewardPoints: 0
+  };
+  db.transactions.unshift(tx);
+  const MONTH_NAMES2 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const nowD2 = new Date();
+  const nextMonthName2 = MONTH_NAMES2[(nowD2.getMonth()+1)%12];
+  saveDB(); renderEmis(); renderDashboard();
+  showToast(`✅ ${MONTH_NAMES2[nowD2.getMonth()]} EMI paid: ${fmt(e.amount)} · Next: ${nextMonthName2}`, 'green');
+}
+
+function deleteEmi(id) {
+  if (!confirm('Delete this EMI? Auto-generated payment transactions will also be removed.')) return;
+  const emi = db.emis.find(e=>e.id===id);
+  db.transactions = db.transactions.filter(t => !(t._emiId === id || (t.tags?.includes('emi-auto') && emi && t.merchant === `EMI - ${emi.name}`)));
+  db.emis = db.emis.filter(e=>e.id!==id);
+  saveDB(); renderEmis();
+  showToast('🗑️ EMI and its auto-payments deleted', 'red');
+}
+
+// ============================================================
+// CASHBACK
+// ============================================================
+function renderCashback() {
+  const refundMap = buildRefundMap();
+  const expenses = db.transactions.filter(t=>t.type==='expense' && !(t.tags&&t.tags.includes('emi-auto')));
+  const totalCb = expenses.reduce((s,t)=>s+effectiveCashback(t,refundMap),0);
+  const curCb = getCurrentMonthTxs().filter(t=>t.type==='expense').reduce((s,t)=>s+effectiveCashback(t,refundMap),0);
+  const txsWithCb = expenses.filter(t=>effectiveCashback(t,refundMap)>0);
+
+  document.getElementById('cashbackStats').innerHTML = `
+    <div class="stat-card" style="--accent-color:linear-gradient(90deg,var(--green),var(--cyan));">
+      <div class="label">Total Cashback Earned</div>
+      <div class="value text-green">${fmt(totalCb)}</div>
+      <div class="sub">All time</div>
+      <div class="icon-bg" style="--icon-bg:rgba(34,197,94,0.12);">💰</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">This Month</div>
+      <div class="value text-green">${fmt(curCb)}</div>
+      <div class="sub">${monthLabel(nowMonth())}</div>
+      <div class="icon-bg">📅</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Avg per Transaction</div>
+      <div class="value">${fmt(txsWithCb.length ? totalCb/txsWithCb.length : 0)}</div>
+      <div class="sub">${txsWithCb.length} transactions with cashback</div>
+      <div class="icon-bg">📊</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Best Cashback Rate</div>
+      <div class="value text-accent">${fmtPct(expenses.length ? Math.max(...expenses.map(t=>t.cashbackPct||0)) : 0)}</div>
+      <div class="sub">Highest single transaction</div>
+      <div class="icon-bg">🏆</div>
+    </div>
+  `;
+
+  // By card
+  const cbCard = {};
+  expenses.forEach(t=>{ if(t.card) cbCard[t.card]=(cbCard[t.card]||0)+effectiveCashback(t,refundMap); });
+  document.getElementById('cashbackByCard').innerHTML = Object.entries(cbCard).sort((a,b)=>b[1]-a[1]).map(([id,cb])=>{
+    const card = getCardById(id);
+    return `<div class="flex justify-between items-center" style="padding:10px 0;border-bottom:1px solid var(--border);">
+      <span style="font-size:13px;">${card?`${card.bank} ${card.name}`:id}</span>
+      <span class="text-green" style="font-weight:700;">${fmt(cb)}</span>
+    </div>`;
+  }).join('') || '<div class="empty-state"><p>No cashback data</p></div>';
+
+  // By merchant
+  const cbMerch = {};
+  expenses.forEach(t=>{ cbMerch[t.merchant]=(cbMerch[t.merchant]||0)+effectiveCashback(t,refundMap); });
+  document.getElementById('cashbackByMerchant').innerHTML = Object.entries(cbMerch).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([m,cb])=>
+    `<div class="flex justify-between items-center" style="padding:10px 0;border-bottom:1px solid var(--border);">
+      <span style="font-size:13px;">${getCatEmoji('')} ${m}</span>
+      <span class="text-green" style="font-weight:700;">${fmt(cb)}</span>
+    </div>`
+  ).join('') || '<div class="empty-state"><p>No data</p></div>';
+
+  // Cashback transactions - compact horizontal
+  document.getElementById('cashbackTxList').innerHTML = txsWithCb.length ?
+    txsWithCb.sort((a,b)=>effectiveCashback(b,refundMap)-effectiveCashback(a,refundMap)).slice(0,20).map(t => {
+      const card = getCardById(t.card);
+      const cardLabel = card ? `${card.bank} ${card.name}` : (t.paymentMode || 'UPI');
+      const cb = effectiveCashback(t,refundMap);
+      const catShort = (t.category||'Other').split(' > ').pop();
+      const dd = new Date(t.date);
+      return `<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer;" onclick="showTxDetail('${t.id}')">
+        <div style="min-width:32px;text-align:center;flex-shrink:0;">
+          <div style="font-size:13px;font-weight:700;color:var(--text);line-height:1.1;">${dd.getDate()}</div>
+          <div style="font-size:9px;color:var(--text3);text-transform:uppercase;">${dd.toLocaleDateString('en-IN',{month:'short'})}</div>
+        </div>
+        <div style="width:32px;height:32px;border-radius:8px;background:var(--surface2);display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0;">${getCatEmoji(t.category)}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${t.merchant}</div>
+          <div style="display:flex;gap:5px;align-items:center;margin-top:2px;">
+            <span style="font-size:10px;background:rgba(79,142,247,0.1);color:var(--accent);padding:1px 5px;border-radius:3px;">${catShort}</span>
+            <span style="font-size:10px;color:var(--text3);">${cardLabel}</span>
+          </div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;">
+          <div style="font-size:13px;font-weight:700;color:var(--red);">-${fmt(t.amount)}</div>
+          <div style="font-size:11px;font-weight:700;color:var(--green);">+${fmt(cb)}</div>
+        </div>
+      </div>`;
+    }).join('')
+    :
+    '<div class="empty-state" style="padding:24px;text-align:center;"><p>No cashback transactions</p></div>';
+}
+
+// ============================================================
+// BUDGETS
+// ============================================================
+function renderBudgets() {
+  const cur = nowMonth();
+  const txs = db.transactions.filter(t=>getTxMonth(t)===cur && t.type==='expense');
+  document.getElementById('budgetList').innerHTML = db.budgets.length ? db.budgets.map(b => {
+    const spent = txs.filter(t => b.category.includes(' > ') ? t.category===b.category : t.category?.startsWith(b.category)).reduce((s,t)=>s+t.amount,0);
+    const pct = b.limit ? Math.min(100,spent/b.limit*100) : 0;
+    const color = pct>90?'var(--red)':pct>70?'var(--orange)':'var(--green)';
+    return `<div class="panel" style="margin-bottom:12px;">
+      <div class="panel-body">
+        <div class="flex justify-between items-center mb-2">
+          <span style="font-weight:600;">${getCatEmoji(b.category)} ${b.category.split(' > ').pop()}</span>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <span style="font-size:12px;color:${color};font-weight:700;">${fmtPct(pct)}</span>
+            <button class="btn btn-danger btn-sm" onclick="deleteBudget('${b.id}')">✕</button>
+          </div>
+        </div>
+        <div class="progress-bar" style="height:8px;margin-bottom:8px;"><div class="progress-fill" style="width:${pct}%;background:${color};"></div></div>
+        <div class="flex justify-between" style="font-size:12px;color:var(--text2);">
+          <span>Spent: <strong style="color:var(--text);">${fmt(spent)}</strong></span>
+          <span>Budget: <strong style="color:var(--text);">${fmt(b.limit)}</strong></span>
+          <span>Left: <strong style="color:${color};">${fmt(Math.max(0,b.limit-spent))}</strong></span>
+        </div>
+        ${pct>90?`<div style="margin-top:8px;padding:6px 10px;background:rgba(239,68,68,0.1);border-radius:8px;font-size:11px;color:var(--red);">⚠️ Budget almost exhausted!</div>`:''}
+      </div>
+    </div>`;
+  }).join('') : '<div class="empty-state"><div class="icon">🎯</div><p>No budgets set. Add one to track spending.</p></div>';
+}
+
+function openBudgetModal() {
+  const catSel = document.getElementById('bCategory');
+  catSel.innerHTML = ALL_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join('');
+  document.getElementById('bAmount').value = '';
+  openModal('budgetModal');
+}
+
+function saveBudget() {
+  const cat = document.getElementById('bCategory').value;
+  const limit = parseFloat(document.getElementById('bAmount').value);
+  if (!limit) { showToast('❌ Enter budget amount', 'red'); return; }
+  const existing = db.budgets.findIndex(b=>b.category===cat);
+  if (existing>=0) db.budgets[existing].limit = limit;
+  else db.budgets.push({ id:uid(), category:cat, limit });
+  saveDB(); closeModal('budgetModal');
+  showToast('✅ Budget saved', 'green');
+  renderBudgets();
+}
+
+function deleteBudget(id) {
+  db.budgets = db.budgets.filter(b=>b.id!==id);
+  saveDB(); renderBudgets();
+}
+
+// ============================================================
+// SETTINGS
+// ============================================================
+function renderSettings() {
+  // Cashback rules
+  document.getElementById('cashbackRules').innerHTML = `
+    <div style="margin-bottom:12px;">
+      <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">Card Cashback Rates</div>
+      ${db.cards.map(card=>`
+        <div class="flex justify-between items-center" style="padding:8px 0;border-bottom:1px solid var(--border);">
+          <span style="font-size:13px;">${card.bank} ${card.name}</span>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <span style="font-size:11px;color:var(--text3);">Online:</span>
+            <input type="number" value="${card.onlineCashbackPct||0}" class="form-control" style="width:50px;padding:4px 8px;" onchange="updateCardCashback('${card.id}','online',this.value)" step="0.1">
+            <span style="font-size:11px;color:var(--text3);">Offline:</span>
+            <input type="number" value="${card.cashbackPct||0}" style="width:50px;" class="form-control" onchange="updateCardCashback('${card.id}','offline',this.value)" step="0.1">
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+
+  // Merchant mapping (top entries)
+  const entries = Object.entries(MERCHANT_MAP).slice(0,15);
+  document.getElementById('merchantMapping').innerHTML = `
+    <div style="font-size:11px;color:var(--text3);margin-bottom:8px;">Auto-detected merchant→category mappings (${Object.keys(MERCHANT_MAP).length} total)</div>
+    ${entries.map(([m,c])=>`
+      <div class="flex justify-between" style="padding:6px 0;border-bottom:1px solid var(--border);font-size:12px;">
+        <span style="text-transform:capitalize;">${m}</span>
+        <span style="color:var(--text2);">${c.split(' > ').pop()}</span>
+      </div>
+    `).join('')}
+    <div style="font-size:11px;color:var(--text3);margin-top:8px;">+ ${Object.keys(MERCHANT_MAP).length-15} more mappings</div>
+  `;
+}
+
+function updateCardCashback(id, type, val) {
+  const card = db.cards.find(c=>c.id===id);
+  if (!card) return;
+  if (type==='online') card.onlineCashbackPct = parseFloat(val)||0;
+  else card.cashbackPct = parseFloat(val)||0;
+  saveDB();
+  showToast('✅ Cashback rate updated', 'green');
+}
+
+// ============================================================
+// EXPORT / IMPORT
+// ============================================================
+function exportJSON() {
+  const blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `finos_backup_${today()}.json`;
+  a.click();
+  showToast('📦 Backup exported', 'green');
+}
+
+function exportCSV() {
+  const headers = ['Date','Merchant','Amount','Category','Card','Type','CashbackPct','CashbackAmt','NetSpend','Notes','Tags'];
+  const rows = db.transactions.map(t => [
+    t.date, t.merchant, t.amount, t.category, getCardLabel(t.card), t.type,
+    t.cashbackPct, effectiveCashback(t).toFixed(2), t.netSpend, t.notes, (t.tags||[]).join(';')
+  ]);
+  const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `finos_transactions_${today()}.csv`;
+  a.click();
+  showToast('📥 CSV exported', 'green');
+}
+
+function importBackup() { document.getElementById('importFile').click(); }
+
+function handleImport(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      if (!Array.isArray(data.transactions)) throw new Error('Invalid format');
+      const currentCount = db.transactions.length;
+      const importCount = data.transactions.length;
+      if (!confirm(`Import backup?\n\nCurrent: ${currentCount} transactions\nBackup: ${importCount} transactions\n\nClick OK to REPLACE all data.`)) return;
+      db = {
+        transactions: data.transactions || [],
+        cards: data.cards || JSON.parse(JSON.stringify(DEFAULT_CARDS)),
+        emis: data.emis || [],
+        budgets: data.budgets || [],
+        fixedSpends: data.fixedSpends || [],
+        cashbackRules: data.cashbackRules || [],
+      };
+      saveDB();
+      showToast(`✅ Imported ${importCount} transactions`, 'green');
+      renderPage(currentPage);
+    } catch(err) { showToast('❌ Invalid or corrupt backup file', 'red'); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
+
+function resetAllData() {
+  if (!confirm('⚠️ This will delete ALL data. Are you sure?')) return;
+  localStorage.removeItem(STORAGE_KEY);
+  db = { transactions:[], cards:[], emis:[], budgets:[], cashbackRules:[] };
+  loadDB();
+  if (!db.transactions || db.transactions.length === 0) {
+    loadRichDemoData();
+  }
+  showToast('🗑️ All data reset', 'red');
+  renderPage(currentPage);
+}
+
+// ============================================================
+// TOAST
+// ============================================================
+function showToast(msg, type='green') {
+  const container = document.getElementById('toastContainer');
+  while (container.children.length >= 3) container.removeChild(container.firstChild);
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.style.borderColor = type==='red'?'rgba(239,68,68,0.3)':type==='green'?'rgba(34,197,94,0.3)':'var(--border2)';
+  t.textContent = msg;
+  container.appendChild(t);
+  setTimeout(() => { t.style.opacity='0'; t.style.transform='translateX(100px)'; t.style.transition='all 0.3s'; setTimeout(()=>t.remove(),300); }, 3000);
+}
+
+// ============================================================
+// FIXED SPENDS
+// ============================================================
+let editingFsId = null;
+
+function openFixedSpendModal(prefill) {
+  editingFsId = prefill ? prefill.id : null;
+  document.getElementById('fixedSpendModalTitle').textContent = editingFsId ? 'Edit Fixed Spend' : 'Add Fixed Spend';
+  const catSel = document.getElementById('fsCategory');
+  catSel.innerHTML = ALL_CATEGORIES.map(c => `<option value="${c}">${c}</option>`).join('');
+  const cardSel = document.getElementById('fsCard');
+  cardSel.innerHTML = '<option value="">UPI</option><option value="cash">Cash</option>' +
+    db.cards.map(c => `<option value="${c.id}">${c.bank} ${c.name}</option>`).join('');
+  if (prefill) {
+    document.getElementById('fsName').value = prefill.name;
+    document.getElementById('fsAmount').value = prefill.amount;
+    document.getElementById('fsCategory').value = prefill.category;
+    document.getElementById('fsDueDay').value = prefill.dueDay || '';
+    document.getElementById('fsCard').value = prefill.card || '';
+    document.getElementById('fsNotes').value = prefill.notes || '';
+  } else {
+    document.getElementById('fsName').value = '';
+    document.getElementById('fsAmount').value = '';
+    document.getElementById('fsDueDay').value = '';
+    document.getElementById('fsCard').value = '';
+    document.getElementById('fsNotes').value = '';
+  }
+  openModal('fixedSpendModal');
+}
+
+function saveFixedSpend() {
+  const name = document.getElementById('fsName').value.trim();
+  const amount = parseFloat(document.getElementById('fsAmount').value);
+  if (!name || !amount) { showToast('❌ Name and Amount required', 'red'); return; }
+  const fs = {
+    id: editingFsId || uid(),
+    name,
+    amount,
+    category: document.getElementById('fsCategory').value,
+    dueDay: parseInt(document.getElementById('fsDueDay').value) || null,
+    card: document.getElementById('fsCard').value,
+    notes: document.getElementById('fsNotes').value
+  };
+  if (!db.fixedSpends) db.fixedSpends = [];
+  if (editingFsId) {
+    const idx = db.fixedSpends.findIndex(f => f.id === editingFsId);
+    if (idx >= 0) db.fixedSpends[idx] = fs;
+  } else {
+    db.fixedSpends.push(fs);
+  }
+  saveDB();
+  closeModal('fixedSpendModal');
+  showToast('✅ Fixed spend saved', 'green');
+  renderFixedSpends();
+}
+
+function deleteFixedSpend(id) {
+  if (!confirm('Delete this fixed spend?')) return;
+  db.fixedSpends = (db.fixedSpends || []).filter(f => f.id !== id);
+  saveDB();
+  showToast('🗑️ Deleted', 'red');
+  renderFixedSpends();
+}
+
+function renderFixedSpends() {
+  if (!db.fixedSpends) db.fixedSpends = [];
+  const list = db.fixedSpends;
+  const total = list.reduce((s, f) => s + f.amount, 0);
+  document.getElementById('fixedSpendsTotal').textContent = fmt(total);
+
+  if (!list.length) {
+    document.getElementById('fixedSpendsList').innerHTML = `
+      <div class="empty-state">
+        <div class="icon">📌</div>
+        <p>No fixed spends added yet.<br>Add rent, EMIs, subscriptions, etc.</p>
+      </div>`;
+    return;
+  }
+
+  document.getElementById('fixedSpendsList').innerHTML = list.map(f => {
+    const card = getCardById(f.card);
+    const cardLabel = card ? `${card.bank} ${card.name}` : (f.card === 'cash' ? 'Cash' : 'UPI');
+    const dueTxt = f.dueDay ? `Due: ${f.dueDay}th` : '';
+    const catEmoji = getCatEmoji(f.category);
+    return `
+      <div class="panel" style="margin-bottom:10px;">
+        <div class="panel-body" style="display:flex;align-items:center;gap:14px;padding:14px 16px;">
+          <div style="width:36px;height:36px;background:var(--surface2);border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">${catEmoji}</div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;font-size:14px;">${f.name}</div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px;display:flex;gap:8px;flex-wrap:wrap;">
+              <span>${(f.category||'').split(' > ').pop()}</span>
+              <span>${cardLabel}</span>
+              ${dueTxt ? `<span style="color:var(--orange);">${dueTxt}</span>` : ''}
+              ${f.notes ? `<span>${f.notes}</span>` : ''}
+            </div>
+          </div>
+          <div style="text-align:right;flex-shrink:0;">
+            <div style="font-family:var(--font-head);font-size:16px;font-weight:700;color:var(--orange);">${fmt(f.amount)}</div>
+            <div style="font-size:10px;color:var(--text3);">/ month</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-shrink:0;">
+            <button class="btn btn-ghost btn-sm" data-edit-fs="${escapeHtml(f.id)}">✏️</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteFixedSpend('${escapeHtml(f.id)}')">🗑️</button>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ============================================================
+// INIT
+// ============================================================
+function removeSplash() {
+  const splash = document.getElementById('welcomeSplash');
+  if (!splash) return;
+  splash.style.transition = 'opacity 0.3s ease';
+  splash.style.opacity = '0';
+  setTimeout(() => { try { splash.remove(); } catch(e) {} }, 350);
+}
+
+try {
+  loadDB();
+  if (!db.transactions || db.transactions.length === 0) {
+    loadRichDemoData();
+  }
+  checkEmiAutoPay();
+  checkCardAutoPay();
+  renderDashboard();
+  (function updateTopbarDate() {
+    const now = new Date();
+    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const str = days[now.getDay()] + ', ' + now.getDate() + ' ' + months[now.getMonth()] + ' ' + now.getFullYear();
+    const el = document.getElementById('topbarDate');
+    if (el) el.textContent = str;
+  })();
+} catch(e) {
+  console.error('FinOS init error:', e);
+} finally {
+  // Always remove splash — even if init threw an error
+  removeSplash();
+}
+
+// NAV EVENT DELEGATION - single source of truth
+document.getElementById('mainNav').addEventListener('click', function(e) {
+  const btn = e.target.closest('[data-page]');
+  if (btn) navigate(btn.dataset.page);
+});
+
+// Fixed spend edit delegation
+document.addEventListener('click', function(e) {
+  const btn = e.target.closest('[data-edit-fs]');
+  if (btn) {
+    const fs = (db.fixedSpends||[]).find(f => f.id === btn.dataset.editFs);
+    if (fs) openFixedSpendModal(fs);
+  }
+});
+
+// Close modal on overlay click
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.addEventListener('click', e => { if(e.target===overlay) overlay.classList.remove('open'); });
+});
+
+// ============================================================
+// PWA — Service Worker Registration
+// ============================================================
+// PWA Service Worker — disabled (requires sw.js file)
+
+// PWA — Install prompt (Android)
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredPrompt = e;
+  // Show install banner after 3 seconds if not already installed
+  setTimeout(() => {
+    if (deferredPrompt) showInstallBanner();
+  }, 3000);
+});
+
+function showInstallBanner() {
+  if (document.getElementById('installBanner')) return;
+  const banner = document.createElement('div');
+  banner.id = 'installBanner';
+  banner.style.cssText = `
+    position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
+    background:linear-gradient(135deg,#4f8ef7,#6c63ff);
+    color:#fff;padding:12px 20px;border-radius:14px;
+    display:flex;align-items:center;gap:12px;
+    box-shadow:0 8px 32px rgba(79,142,247,0.4);
+    z-index:9999;font-family:Inter,sans-serif;font-size:13px;
+    animation:slideUp 0.3s ease;max-width:320px;
+  `;
+  banner.innerHTML = `
+    <span style="font-size:22px;">📲</span>
+    <div>
+      <div style="font-weight:700;margin-bottom:2px;">Install FinOS App</div>
+      <div style="opacity:0.85;font-size:11px;">Home screen pe add karo — offline bhi chalega</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-left:auto;">
+      <button onclick="installPWA()" style="background:#fff;color:#4f8ef7;border:none;
+        padding:6px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;">
+        Install
+      </button>
+      <button onclick="this.closest('#installBanner').remove()" style="background:rgba(255,255,255,0.2);
+        color:#fff;border:none;padding:4px 14px;border-radius:8px;font-size:11px;cursor:pointer;">
+        Later
+      </button>
+    </div>
+  `;
+  document.body.appendChild(banner);
+}
+
+function installPWA() {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  deferredPrompt.userChoice.then(choice => {
+    if (choice.outcome === 'accepted') {
+      showToast('✅ FinOS installed!', 'green');
+    }
+    deferredPrompt = null;
+    const banner = document.getElementById('installBanner');
+    if (banner) banner.remove();
+  });
+}
+
+window.addEventListener('appinstalled', () => {
+  showToast('🎉 FinOS app installed!', 'green');
+  deferredPrompt = null;
+});
+</script>
+</body>
+</html>
