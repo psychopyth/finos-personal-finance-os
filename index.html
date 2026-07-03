@@ -925,12 +925,14 @@
       </div>
 
       <!-- BUDGETS -->
+      <!-- ===== PATCH 1 START: Single Monthly Budget Engine (page markup) ===== -->
       <div class="page" id="page-budgets">
         <div style="display:flex;justify-content:flex-end;margin-bottom:16px;">
-          <button class="btn btn-primary" onclick="openBudgetModal()">+ Set Budget</button>
+          <button class="btn btn-primary" onclick="openBudgetModal()">⚙️ Configure Budget</button>
         </div>
         <div id="budgetList"></div>
       </div>
+      <!-- ===== PATCH 1 END ===== -->
 
       <!-- FIXED SPENDS -->
       <div class="page" id="page-fixedspends">
@@ -1320,21 +1322,38 @@
 </div>
 
 <!-- BUDGET MODAL -->
+<!-- ===== PATCH 1 START: Single Monthly Budget Engine (setup modal) ===== -->
 <div class="modal-overlay" id="budgetModal">
   <div class="modal" style="max-width:400px;">
     <div class="modal-header">
-      <span class="modal-title">Set Budget</span>
+      <span class="modal-title">Configure Monthly Budget</span>
       <button class="btn btn-ghost btn-icon" onclick="closeModal('budgetModal')">✕</button>
     </div>
     <div class="modal-body">
       <div class="form-group">
-        <label>Category</label>
-        <select class="form-control" id="bCategory"></select>
+        <label>Total Monthly Budget (₹)</label>
+        <input type="number" class="form-control" id="bAmount" placeholder="e.g. 40000">
       </div>
       <div class="form-group">
-        <label>Monthly Limit (₹)</label>
-        <input type="number" class="form-control" id="bAmount" placeholder="5000">
+        <label>Cycle</label>
+        <select class="form-control" id="bCycleType" onchange="document.getElementById('bCycleDayWrap').style.display=(this.value==='custom')?'flex':'none';">
+          <option value="calendar">Calendar Month (1st → month end)</option>
+          <option value="custom">Custom Cycle (e.g. salary date)</option>
+        </select>
       </div>
+      <div class="form-group" id="bCycleDayWrap" style="display:none;">
+        <label>Cycle Start Day</label>
+        <input type="number" class="form-control" id="bCycleDay" min="1" max="28" placeholder="e.g. 25">
+      </div>
+      <div class="form-group">
+        <label style="flex-direction:row;align-items:center;gap:8px;">
+          <input type="checkbox" id="bIncludeEmi" style="width:auto;">
+          Include EMI payments in budget deduction
+        </label>
+      </div>
+      <p class="text-muted" style="font-size:11px;margin:0;">
+        ℹ️ Card bill payments are always excluded from budget deduction (that money was already counted as an expense when it was spent). Refunds are added back.
+      </p>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('budgetModal')">Cancel</button>
@@ -1342,6 +1361,7 @@
     </div>
   </div>
 </div>
+<!-- ===== PATCH 1 END ===== -->
 
 
 <!-- QUICK EMI PURCHASE MODAL -->
@@ -1421,17 +1441,286 @@
 // ============================================================
 const STORAGE_KEY = 'finos_data';
 
-// Storage version migration (safe — does NOT delete user data)
-try {
-  const existing = localStorage.getItem(STORAGE_KEY);
-  if (existing) {
-    const parsed = JSON.parse(existing);
-    // Future migrations can go here without touching user data
-    console.log('FinOS storage loaded:', (parsed.transactions||[]).length, 'transactions');
+// ===== PATCH 2 START: IndexedDB Storage Layer (persistence only — no business logic touched) =====
+//
+// WHAT THIS REPLACES:
+//   localStorage.getItem(STORAGE_KEY) / localStorage.setItem(STORAGE_KEY, ...)
+//
+// WHAT IT DOES NOT TOUCH:
+//   Budget Engine, Card Engine, EMI Engine, Statement Engine, Refund Engine, UI/rendering.
+//   loadDB()/saveDB() keep their exact names and call signatures so every existing call site
+//   (27 of them) keeps working with zero edits elsewhere in the file.
+//
+// STRATEGY:
+//   - Primary store: IndexedDB (finos-db / store "app" / record id "main"). No practical size cap,
+//     removes the 5–10MB localStorage ceiling.
+//   - First run: if IndexedDB is empty but legacy localStorage ("finos_data") has data, it is
+//     migrated automatically, verified by reading it back, then the original localStorage value
+//     is preserved under a backup key (never deleted) and a "finos_migrated" flag is set.
+//   - Fallback: if IndexedDB is unavailable, fails to open, or a write throws mid-session, storage
+//     transparently degrades to localStorage for the rest of the session — nothing crashes, nothing
+//     is lost, existing users are never blocked.
+//   - Writes are debounced (500ms) and coalesced into a single "latest snapshot" write, with a
+//     forced flush on tab-hide / unload so nothing sits unsaved for long.
+//   - Schema is versioned (db.metadata.schemaVersion) with an upgrade chain (migrateSchema v1→v2,
+//     stubbed v2→v3) so old exported backups or old IndexedDB records auto-upgrade on load.
+//
+// ROLLBACK:
+//   Nothing about the legacy localStorage record is ever deleted — only copied to
+//   "finos_data_backup" once migrated. If IndexedDB misbehaves, the app keeps running on
+//   localStorage exactly as it did before this patch.
+
+const IDB_DB_NAME = 'finos-db';
+const IDB_DB_VERSION = 1;
+const IDB_STORE_NAME = 'app';
+const IDB_RECORD_ID = 'main';
+const LS_BACKUP_KEY = 'finos_data_backup';
+const LS_MIGRATED_FLAG = 'finos_migrated';
+const CURRENT_SCHEMA_VERSION = 3; // ===== PATCH 5: bumped 2 -> 3 (Money-as-Paise migration) =====
+
+class FinOSStorage {
+  constructor() {
+    this.idb = null;
+    this.idbAvailable = true;
+    this.saveTimer = null;
+    this.pendingData = null;
+    this.SAVE_DEBOUNCE_MS = 500;
+    this._initPromise = null;
   }
-} catch(e) {
-  console.log('Storage check skipped');
+
+  // Opens (or falls back from) IndexedDB. Safe to call multiple times.
+  async init() {
+    if (this._initPromise) return this._initPromise;
+    this._initPromise = (async () => {
+      if (!('indexedDB' in window)) {
+        this.idbAvailable = false;
+        console.warn('FinOSStorage: IndexedDB not available in this browser, using localStorage fallback');
+        return;
+      }
+      try {
+        this.idb = await this._openDB();
+      } catch (e) {
+        console.error('FinOSStorage: failed to open IndexedDB, falling back to localStorage', e);
+        this.idbAvailable = false;
+        this.idb = null;
+      }
+    })();
+    return this._initPromise;
+  }
+
+  _openDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(IDB_DB_NAME, IDB_DB_VERSION);
+      req.onupgradeneeded = (ev) => {
+        const idb = ev.target.result;
+        if (!idb.objectStoreNames.contains(IDB_STORE_NAME)) {
+          idb.createObjectStore(IDB_STORE_NAME, { keyPath: 'id' });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+      req.onblocked = () => reject(new Error('IndexedDB open blocked (another tab holding an old version?)'));
+    });
+  }
+
+  _idbGet() {
+    if (!this.idb) return Promise.resolve(null);
+    return new Promise((resolve, reject) => {
+      try {
+        const tx = this.idb.transaction(IDB_STORE_NAME, 'readonly');
+        const store = tx.objectStore(IDB_STORE_NAME);
+        const req = store.get(IDB_RECORD_ID);
+        req.onsuccess = () => resolve(req.result || null);
+        req.onerror = () => reject(req.error);
+      } catch (e) { reject(e); }
+    });
+  }
+
+  _idbPut(record) {
+    if (!this.idb) return Promise.reject(new Error('IndexedDB not open'));
+    return new Promise((resolve, reject) => {
+      try {
+        const tx = this.idb.transaction(IDB_STORE_NAME, 'readwrite');
+        tx.objectStore(IDB_STORE_NAME).put(record);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      } catch (e) { reject(e); }
+    });
+  }
+
+  _idbDelete() {
+    if (!this.idb) return Promise.resolve(false);
+    return new Promise((resolve, reject) => {
+      try {
+        const tx = this.idb.transaction(IDB_STORE_NAME, 'readwrite');
+        tx.objectStore(IDB_STORE_NAME).delete(IDB_RECORD_ID);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = () => reject(tx.error);
+      } catch (e) { reject(e); }
+    });
+  }
+
+  // Loads app data — IndexedDB first, auto-migrating legacy localStorage on first run,
+  // falling back to plain localStorage if IndexedDB is unavailable or errors out.
+  async load() {
+    await this.init();
+    if (this.idbAvailable && this.idb) {
+      try {
+        const record = await this._idbGet();
+        if (record && record.data) return this._upgradeSchema(record.data);
+        const migrated = await this.migrateFromLocalStorage();
+        if (migrated) return this._upgradeSchema(migrated);
+        return null;
+      } catch (e) {
+        console.error('FinOSStorage.load: IndexedDB read failed, falling back to localStorage', e);
+        this.idbAvailable = false;
+      }
+    }
+    return this._loadFromLocalStorage();
+  }
+
+  _loadFromLocalStorage() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      return this._upgradeSchema(JSON.parse(raw));
+    } catch (e) {
+      console.error('FinOSStorage: localStorage read failed', e);
+      return null;
+    }
+  }
+
+  // One-time migration: legacy localStorage → IndexedDB. Never deletes the original.
+  async migrateFromLocalStorage() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      await this._idbPut({
+        id: IDB_RECORD_ID,
+        data,
+        metadata: { schemaVersion: (data.metadata && data.metadata.schemaVersion) || 1, migratedAt: new Date().toISOString() }
+      });
+      // Verify migration actually landed before touching anything in localStorage.
+      const verify = await this._idbGet();
+      if (!verify || !verify.data) throw new Error('Migration verification read failed');
+      localStorage.setItem(LS_BACKUP_KEY, raw); // preserved, never deleted
+      localStorage.setItem(LS_MIGRATED_FLAG, 'true');
+      console.log('FinOSStorage: migrated', (data.transactions || []).length, 'transactions from localStorage to IndexedDB');
+      return data;
+    } catch (e) {
+      console.error('FinOSStorage: migration to IndexedDB failed — localStorage remains the source of truth', e);
+      return null;
+    }
+  }
+
+  // ---- Schema versioning ----
+  _upgradeSchema(data) {
+    if (!data || typeof data !== 'object') return data;
+    if (!data.metadata) data.metadata = {};
+    let v = data.metadata.schemaVersion || 1;
+    if (v < 2) { data = this._migrateSchema_v1_to_v2(data); v = 2; }
+    // ===== PATCH 5: wired to the real migrateSchemaV2toV3() (money-as-paise), not the
+    // unused _migrateSchema_v2_to_v3 stub — see comment at migrateSchemaV2toV3() itself. =====
+    if (v < 3) { data = migrateSchemaV2toV3(data); v = 3; }
+    data.metadata.schemaVersion = CURRENT_SCHEMA_VERSION;
+    if (!data.metadata.createdAt) data.metadata.createdAt = new Date().toISOString();
+    return data;
+  }
+
+  _migrateSchema_v1_to_v2(data) {
+    // v1 → v2 is envelope-only (adds db.metadata). No business fields are altered here —
+    // loadDB() still owns filling in feature defaults (cards/emis/budget/etc).
+    return data;
+  }
+
+  // ---- Save path (debounced, coalesced) ----
+  // Safe to call synchronously/frequently — every call just replaces the pending snapshot.
+  save(data) {
+    this.pendingData = data;
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => { this._flush(); }, this.SAVE_DEBOUNCE_MS);
+  }
+
+  // Forces whatever is pending to be written immediately (tab hide / unload / explicit backup).
+  async flush() {
+    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
+    if (this.pendingData === null) return;
+    await this._flush();
+  }
+
+  async _flush() {
+    this.saveTimer = null;
+    const data = this.pendingData;
+    if (data === null) return;
+    this.pendingData = null;
+    if (!data.metadata) data.metadata = {};
+    data.metadata.schemaVersion = CURRENT_SCHEMA_VERSION;
+    if (!data.metadata.createdAt) data.metadata.createdAt = new Date().toISOString();
+
+    if (this.idbAvailable && this.idb) {
+      try {
+        await this._idbPut({ id: IDB_RECORD_ID, data, metadata: data.metadata });
+        return;
+      } catch (e) {
+        console.error('FinOSStorage: IndexedDB write failed, falling back to localStorage for this save', e);
+        this.idbAvailable = false; // degrade gracefully for the rest of the session
+      }
+    }
+    this._saveToLocalStorage(data);
+  }
+
+  _saveToLocalStorage(data) {
+    try {
+      const serialized = JSON.stringify(data);
+      localStorage.setItem(STORAGE_KEY, serialized);
+      if (serialized.length > 4 * 1024 * 1024 && typeof showToast === 'function') {
+        showToast('⚠️ Storage nearly full. Export a backup soon.', 'orange');
+      }
+    } catch (e) {
+      if (e.name === 'QuotaExceededError' && typeof showToast === 'function') {
+        showToast('❌ Storage full! Export backup immediately before data loss.', 'red');
+      } else {
+        console.error('FinOSStorage: localStorage write failed', e);
+      }
+    }
+  }
+
+  // ---- Backup / Restore (used by exportJSON/handleImport indirectly via db + saveDB) ----
+  async backup() {
+    await this.flush();
+    const record = this.idbAvailable && this.idb ? await this._idbGet() : null;
+    const data = record ? record.data : this._loadFromLocalStorage();
+    return { version: CURRENT_SCHEMA_VERSION, exportedAt: new Date().toISOString(), data };
+  }
+
+  async restore(backupObj) {
+    let data = backupObj && backupObj.data ? backupObj.data : backupObj;
+    data = this._upgradeSchema(data);
+    this.pendingData = data;
+    await this.flush();
+    return data;
+  }
+
+  async clearAll() {
+    if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
+    this.pendingData = null;
+    if (this.idbAvailable && this.idb) {
+      try { await this._idbDelete(); } catch (e) { console.error('FinOSStorage: IndexedDB clear failed', e); }
+    }
+    try { localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+  }
 }
+
+const finosStorage = new FinOSStorage();
+
+// Best-effort flush of any debounced write still pending when the user leaves/hides the tab.
+window.addEventListener('beforeunload', () => { finosStorage.flush(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') finosStorage.flush();
+});
+// ===== PATCH 2 END =====
 
 
 const CARD_COLORS = {
@@ -1442,11 +1731,13 @@ const CARD_COLORS = {
   dark: ['#1e293b','#0f172a']
 };
 
+// ===== PATCH 5: removed dead `outstanding:0` field from every default card (see DELETE
+// notes below at calculateCardOutstanding()) =====
 const DEFAULT_CARDS = [
-  { id:'hdfc_moneyback', bank:'HDFC', name:'MoneyBack', limit:92000, billDate:17, dueDate:7, points:5864, cashbackPct: 0, onlineCashbackPct: 0, color:'blue', outstanding:0, cashbackToCard: false },
-  { id:'hdfc_rupay', bank:'HDFC', name:'RuPay', limit:50000, billDate:17, dueDate:7, points:0, cashbackPct: 0, onlineCashbackPct: 0, color:'dark', outstanding:0, cashbackToCard: false },
-  { id:'icici_platinum', bank:'ICICI', name:'Platinum', limit:100000, billDate:17, dueDate:7, points:0, cashbackPct: 0, onlineCashbackPct: 0, color:'gold', outstanding:0, cashbackToCard: false },
-  { id:'sbi_cashback', bank:'SBI', name:'Cashback Card', limit:100000, billDate:5, dueDate:25, points:0, cashbackPct: 0, onlineCashbackPct: 0, color:'green', outstanding:0, cashbackToCard: true }
+  { id:'hdfc_moneyback', bank:'HDFC', name:'MoneyBack', limit:92000, billDate:17, dueDate:7, points:5864, cashbackPct: 0, onlineCashbackPct: 0, color:'blue', cashbackToCard: false },
+  { id:'hdfc_rupay', bank:'HDFC', name:'RuPay', limit:50000, billDate:17, dueDate:7, points:0, cashbackPct: 0, onlineCashbackPct: 0, color:'dark', cashbackToCard: false },
+  { id:'icici_platinum', bank:'ICICI', name:'Platinum', limit:100000, billDate:17, dueDate:7, points:0, cashbackPct: 0, onlineCashbackPct: 0, color:'gold', cashbackToCard: false },
+  { id:'sbi_cashback', bank:'SBI', name:'Cashback Card', limit:100000, billDate:5, dueDate:25, points:0, cashbackPct: 0, onlineCashbackPct: 0, color:'green', cashbackToCard: true }
 ];
 
 const DEFAULT_EMIS = [];
@@ -1496,20 +1787,58 @@ const MERCHANT_MAP = {
 // Online merchant keywords (for SBI 5% cashback)
 const ONLINE_KEYWORDS = ['amazon','flipkart','myntra','zomato','swiggy','blinkit','zepto','netflix','spotify','hotstar','udemy','nykaa','ajio','meesho','bigbasket','jiomart'];
 
-let db = { transactions:[], cards:[], emis:[], budgets:[], cashbackRules:[] };
+let db = { transactions:[], cards:[], emis:[], budgets:[], budget:null, cashbackRules:[], metadata:null }; // ===== PATCH 1: added `budget` (singular) for Single Monthly Budget Engine; loadDB() fills real defaults. ===== PATCH 4: added `metadata` (schema/currency info); ensureSchemaDefaults() fills real defaults
 let editingTxId = null;
 let currentPage = 'dashboard';
 
-function loadDB() {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (raw) {
-    try { db = JSON.parse(raw); } catch(e) {}
+async function loadDB() {
+  // ===== PATCH 2: was `const raw = localStorage.getItem(STORAGE_KEY); db = JSON.parse(raw)` =====
+  // Now routed through FinOSStorage (IndexedDB, auto-migrating/falling back to localStorage).
+  // Everything below this line is completely unchanged business logic.
+  try {
+    const loaded = await finosStorage.load();
+    if (loaded) db = loaded;
+  } catch (e) {
+    console.error('loadDB: storage layer failed unexpectedly, keeping in-memory defaults', e);
   }
+  ensureSchemaDefaults();
+  // ===== PATCH 2 (hardening): ensureSchemaDefaults() mutates `db` in memory only (e.g. backfilling
+  // minDuePct on old cards, or db.statementCycles). Without this, that backfill would live only in
+  // memory until some unrelated user action next called saveDB() — so a fresh IndexedDB read (or an
+  // export taken right after load, before any edit) could still reflect the un-upgraded record. This
+  // schedules the debounced write immediately so the persisted copy matches the in-memory canonical
+  // shape as soon as loadDB() finishes, with no change to what the defaults actually are.
+  saveDB();
+}
+
+// ===== PATCH 2 (hardening): extracted verbatim from loadDB()'s old inline "Ensure defaults"
+// block so the exact same schema-completion logic can also run after handleImport() replaces
+// `db` wholesale. No default values or business rules changed — only made reusable. =====
+function ensureSchemaDefaults() {
   // Ensure defaults
   if (!db.cards || db.cards.length === 0) db.cards = JSON.parse(JSON.stringify(DEFAULT_CARDS));
   if (!db.emis || db.emis.length === 0) db.emis = JSON.parse(JSON.stringify(DEFAULT_EMIS));
   if (!db.transactions) db.transactions = [];
-  if (!db.budgets) db.budgets = [];
+  if (!db.budgets) db.budgets = []; // legacy category-wise budgets — kept as-is (unused by UI) for rollback safety, not deleted
+  // ===== PATCH 1 START: Single Monthly Budget Engine (schema migration) =====
+  // db.budget replaces db.budgets as the source of truth for the Budgets page.
+  // Old category budgets (db.budgets) are left untouched in storage so nothing is lost;
+  // they are simply no longer read by the UI. Safe to re-enable by reverting renderBudgets().
+  if (!db.budget || typeof db.budget !== 'object') {
+    db.budget = {
+      monthlyLimit: 0,        // 0 = not configured yet (rupees, matches rest of app's float convention)
+      cycleType: 'calendar',  // 'calendar' | 'custom'
+      cycleStartDay: 1,       // used only when cycleType === 'custom'
+      includeEmi: false       // whether 'emi-payment' type transactions count against the budget
+    };
+  } else {
+    // Defensive defaults in case of partial/older objects
+    if (typeof db.budget.monthlyLimit !== 'number') db.budget.monthlyLimit = 0;
+    if (db.budget.cycleType !== 'calendar' && db.budget.cycleType !== 'custom') db.budget.cycleType = 'calendar';
+    if (!db.budget.cycleStartDay || db.budget.cycleStartDay < 1 || db.budget.cycleStartDay > 28) db.budget.cycleStartDay = 1;
+    if (typeof db.budget.includeEmi !== 'boolean') db.budget.includeEmi = false;
+  }
+  // ===== PATCH 1 END =====
   if (!db.cashbackRules) db.cashbackRules = [];
   if (!db.fixedSpends) db.fixedSpends = [];
   if (!db.statementCycles) db.statementCycles = [];
@@ -1521,17 +1850,38 @@ function loadDB() {
     if (!c.autoPay) c.autoPay = 'none';
     if (c.autoPayAmount === undefined || c.autoPayAmount === null) c.autoPayAmount = 0;
   });
+  // ===== PATCH 4 START: currency metadata (infrastructure only, no money migration) =====
+  // db.metadata.schemaVersion is already stamped by FinOSStorage._upgradeSchema()/_flush()
+  // (PATCH 2) on every load/save — not duplicated here. This just adds currencyUnit, which
+  // is the seam a future "Money-as-Paise" patch will flip from 'rupees' to 'paise'. Also
+  // covers the one path that bypasses FinOSStorage entirely: a fresh in-memory `db` where
+  // finosStorage.load() itself failed (see loadDB()'s catch block).
+  // ===== PATCH 5: this is also the ONLY path a brand-new install (zero prior data) takes —
+  // finosStorage.load() returns null for a first-ever run, so FinOSStorage._upgradeSchema()
+  // (and therefore migrateSchemaV2toV3()) never executes for that user; this function is the
+  // sole place their metadata gets created. Defaulting a schemaVersion-3 fresh install to
+  // currencyUnit:'rupees' would be a self-contradiction (schemaVersion 3 means "paise" by
+  // definition everywhere else in this file) and would silently store all their new data in
+  // rupees while claiming to be on the paise schema — breaking the very first assumption
+  // handleImport() relies on when deciding whether an incoming backup needs conversion.
+  // A fresh install has no legacy rupee data to preserve, so it starts directly in 'paise'. =====
+  if (!db.metadata || typeof db.metadata !== 'object') {
+    db.metadata = { schemaVersion: CURRENT_SCHEMA_VERSION, currencyUnit: 'paise' };
+  } else if (db.metadata.currencyUnit !== 'rupees' && db.metadata.currencyUnit !== 'paise') {
+    db.metadata.currencyUnit = 'rupees';
+  }
+  // ===== PATCH 4 END =====
   // Start with clean transactions for real personal use
 }
 
 function saveDB() {
+  // ===== PATCH 2: was synchronous localStorage.setItem =====
+  // Now a debounced (500ms), coalesced write via FinOSStorage — IndexedDB primary,
+  // localStorage fallback. Remains callable synchronously from every existing call site.
   try {
-    const serialized = JSON.stringify(db);
-    localStorage.setItem(STORAGE_KEY, serialized);
-    if (serialized.length > 4 * 1024 * 1024) showToast('⚠️ Storage nearly full. Export a backup soon.', 'orange');
+    finosStorage.save(db);
   } catch(e) {
-    if (e.name === 'QuotaExceededError') showToast('❌ Storage full! Export backup immediately before data loss.', 'red');
-    else console.error('saveDB failed:', e);
+    console.error('saveDB failed:', e);
   }
 }
 
@@ -1643,7 +1993,244 @@ function closeSidebar() {
 // ============================================================
 // UTILS
 // ============================================================
-function fmt(n) { const num=parseFloat(n); if(isNaN(num)) return '₹0'; return '₹'+num.toLocaleString('en-IN',{maximumFractionDigits:2}); }
+// ============================================================
+// MONEY HELPERS (PATCH 4 — infrastructure only, NOT a currency migration)
+// ============================================================
+// Everything below still operates on rupee floats, exactly like PATCH 1-3.
+// The goal of this block is to give every money-touching call site in the
+// app ONE seam (fmtMoney/roundMoney/toMinor/fromMinor) to go through, so a
+// future "Money-as-Paise" migration only has to change these four function
+// bodies + db.metadata.currencyUnit — not the ~95 call sites that use them.
+// No stored value, no displayed number, and no rounding behavior changes
+// in this patch. See migrateSchemaV2toV3() below for the (empty) hook
+// where a real data migration would eventually run.
+// ============================================================
+
+// Money-comparison tolerances, named so a future paise migration can find
+// and rescale every one of them in a single search.
+// ===== PATCH 5: rescaled ×100 — same real-world tolerance, now expressed in the storage
+// unit these constants are actually compared against (paise, post Money-as-Paise migration).
+// MONEY_EPSILON: ₹0.50 -> 50 paise. INVARIANT_DRIFT: ₹1 -> 100 paise.
+// REFUND_TOLERANCE: ₹0.01 (1 paisa) -> 1 paisa. =====
+const MONEY_EPSILON = 50;      // "close enough to zero" for a statement balance (integer-rounding drift guard)
+const INVARIANT_DRIFT = 100;   // max acceptable drift between paid+remaining and statementAmount
+const REFUND_TOLERANCE = 1;    // max acceptable overshoot when validating a refund amount
+
+// PATCH 4.5: sanity cap on a single transaction amount, extracted from saveTransaction()'s
+// inline `amount > 10000000` check.
+// ===== PATCH 5: rescaled ×100 — same real-world cap (₹1,00,00,000 / 1 crore), now expressed
+// in paise, since saveTransaction() now compares this against the storage-unit `amount`. =====
+const MAX_TRANSACTION_AMOUNT = 1000000000; // ₹1,00,00,000 (1 crore) in paise
+
+// PATCH 4.5: reward-points accrual rate, extracted from the two inline `Math.floor(amount/100)`
+// call sites (saveTransaction() and parseQuickInput()). NOT itself a "money" constant that
+// needs ×100 rescaling — see calculateRewardPoints() below for why.
+const REWARD_POINTS_RUPEES_PER_POINT = 100; // ₹100 spent on a card = 1 reward point
+
+// ---- calculateRewardPoints ----
+// Replaces the two inline `card ? Math.floor(amount / 100) : 0` expressions. Routes `amount`
+// through fromMinor() first — in rupees mode (today) that's a no-op, so behavior is identical
+// to before. This is deliberately the ONE place this formula exists: when a future patch
+// migrates storage to paise, `amount` arriving here will already be in paise, fromMinor()
+// will convert it back to rupees, and REWARD_POINTS_RUPEES_PER_POINT stays 100 unchanged —
+// i.e. this function needs ZERO edits during the actual migration, only its callers' inputs
+// change meaning. (This is why REWARD_POINTS_RUPEES_PER_POINT is not listed as needing a
+// paise-rescaled value in the audit below — it's a rate expressed in whole rupees-per-point,
+// not a stored money amount.)
+function calculateRewardPoints(amount, card) {
+  if (!card) return 0;
+  return Math.floor(fromMinor(amount) / REWARD_POINTS_RUPEES_PER_POINT);
+}
+
+// ---- Schema / migration registry ----
+// ===== PATCH 5: real Money-as-Paise migration. Runs once, inside FinOSStorage._upgradeSchema(),
+// whenever a record is loaded/restored with schemaVersion < 3. Operates on a plain `data` object
+// (NOT the global `db`) — this can run before `db` even exists, e.g. on first IndexedDB read.
+//
+// Contract: convert every stored RUPEE FLOAT field to an INTEGER PAISE field, delete the dead
+// `outstanding` field, flip data.metadata.currencyUnit to 'paise' ONLY if every validation check
+// passes, and never partially mutate `data` if something looks wrong — on any validation failure
+// this returns the ORIGINAL data untouched (metadata.currencyUnit stays 'rupees', schemaVersion
+// is NOT bumped by the caller in that case... see note at call site) and logs the reason.
+//
+// Fields converted (rupees -> integer paise, Math.round(x*100)):
+//   transactions[]: amount, cashbackAmt, _originalCashbackAmt, netSpend, _cbLost
+//   cards[]:        limit, autoPayAmount
+//   emis[]:         amount
+//   fixedSpends[]:  amount
+//   budget:         monthlyLimit
+// Explicitly NOT converted (rates/percentages/counts, not money):
+//   cashbackPct, onlineCashbackPct, minDuePct, interestRatePctApr, tenure, remaining (EMI
+//   installment count), rewardPoints, dueDay, billDate, points
+//
+// statementCycles are deliberately NOT hand-converted here. They are a fully-derived cache —
+// syncStatementCycles() rebuilds db.statementCycles from scratch from transactions+cards on
+// every cards-page render, autopay check, and pay-bill action (see syncStatementCycles() below).
+// Since transactions/cards are converted here, the next syncStatementCycles() call produces
+// correct paise-scale cycles automatically. We just clear the stale rupee-scale cache so nothing
+// briefly displays 100x-too-small numbers before the first resync.
+function migrateSchemaV2toV3(data) {
+  if (!data || typeof data !== 'object') return data;
+  if (data.metadata && data.metadata.currencyUnit === 'paise') return data; // already migrated, idempotent no-op
+
+  const toPaise = (v) => Math.round((parseFloat(v) || 0) * 100);
+
+  // ---- snapshotBefore: aggregate totals in rupees, for post-migration validation ----
+  const sumBy = (arr, field) => (arr || []).reduce((s, x) => s + (parseFloat(x[field]) || 0), 0);
+  const snapshotBefore = {
+    txCount: (data.transactions || []).length,
+    txAmountTotal: sumBy(data.transactions, 'amount'),
+    txCashbackTotal: sumBy(data.transactions, 'cashbackAmt'),
+    txNetSpendTotal: sumBy(data.transactions, 'netSpend'),
+    cardLimitTotal: sumBy(data.cards, 'limit'),
+    cardAutoPayTotal: sumBy(data.cards, 'autoPayAmount'),
+    emiAmountTotal: sumBy(data.emis, 'amount'),
+    fixedSpendTotal: sumBy(data.fixedSpends, 'amount'),
+    budgetLimit: (data.budget && parseFloat(data.budget.monthlyLimit)) || 0
+  };
+
+  // ---- Rollback strategy: mutate a deep clone, never the original `data` reference. On any
+  // validation failure below, the untouched `data` (captured here, before any mutation) is
+  // returned as-is — this is the actual rollback, not just a comment saying "rollback strategy".
+  const originalData = data;
+  let working;
+  try {
+    working = JSON.parse(JSON.stringify(data));
+  } catch (e) {
+    console.error('FinOS: migrateSchemaV2toV3 ABORTED — could not clone data for safe migration.', e);
+    return originalData;
+  }
+
+  try {
+    (working.transactions || []).forEach(t => {
+      if (t.amount !== undefined) t.amount = toPaise(t.amount);
+      if (t.cashbackAmt !== undefined) t.cashbackAmt = toPaise(t.cashbackAmt);
+      if (t._originalCashbackAmt !== undefined) t._originalCashbackAmt = toPaise(t._originalCashbackAmt);
+      if (t.netSpend !== undefined) t.netSpend = toPaise(t.netSpend);
+      if (t._cbLost !== undefined) t._cbLost = toPaise(t._cbLost);
+    });
+
+    (working.cards || []).forEach(c => {
+      if (c.limit !== undefined) c.limit = toPaise(c.limit);
+      if (c.autoPayAmount !== undefined) c.autoPayAmount = toPaise(c.autoPayAmount);
+      delete c.outstanding; // DELETE dead field (see calculateCardOutstanding() removal notes)
+    });
+
+    (working.emis || []).forEach(e => {
+      if (e.amount !== undefined) e.amount = toPaise(e.amount);
+      if (e.totalAmount !== undefined) e.totalAmount = toPaise(e.totalAmount); // quick-EMI-purchase field
+    });
+
+    (working.fixedSpends || []).forEach(f => {
+      if (f.amount !== undefined) f.amount = toPaise(f.amount);
+    });
+
+    if (working.budget && working.budget.monthlyLimit !== undefined) {
+      working.budget.monthlyLimit = toPaise(working.budget.monthlyLimit);
+    }
+
+    // Stale rupee-scale derived cache — force a clean rebuild on next syncStatementCycles().
+    working.statementCycles = [];
+
+    // ---- snapshotAfter + validation: reconvert paise totals back to rupees and compare ----
+    const snapshotAfter = {
+      txCount: (working.transactions || []).length,
+      txAmountTotal: sumBy(working.transactions, 'amount') / 100,
+      txCashbackTotal: sumBy(working.transactions, 'cashbackAmt') / 100,
+      txNetSpendTotal: sumBy(working.transactions, 'netSpend') / 100,
+      cardLimitTotal: sumBy(working.cards, 'limit') / 100,
+      cardAutoPayTotal: sumBy(working.cards, 'autoPayAmount') / 100,
+      emiAmountTotal: sumBy(working.emis, 'amount') / 100,
+      fixedSpendTotal: sumBy(working.fixedSpends, 'amount') / 100,
+      budgetLimit: ((working.budget && working.budget.monthlyLimit) || 0) / 100
+    };
+
+    const TOLERANCE = 0.01; // rupees; rounding to integer paise can drift at most half a paisa per row
+    const problems = [];
+    if (snapshotBefore.txCount !== snapshotAfter.txCount) problems.push('transaction count changed');
+    Object.keys(snapshotBefore).forEach(k => {
+      if (k === 'txCount') return;
+      const diff = Math.abs(snapshotBefore[k] - snapshotAfter[k]);
+      if (diff > TOLERANCE) problems.push(`${k}: before=${snapshotBefore[k]} after=${snapshotAfter[k]} (Δ${diff.toFixed(2)})`);
+    });
+
+    if (problems.length) {
+      throw new Error('Money-as-Paise migration validation failed: ' + problems.join('; '));
+    }
+
+    if (!working.metadata) working.metadata = {};
+    working.metadata.currencyUnit = 'paise'; // ONLY after every check above passed
+    console.log('FinOS: migrateSchemaV2toV3 succeeded', { snapshotBefore, snapshotAfter });
+    return working;
+  } catch (e) {
+    // ---- Rollback strategy: abort and return the ORIGINAL, untouched data. Nothing about
+    // `data` here is the same object that was mutated in place above for transactions/cards/
+    // emis/fixedSpends/budget, so on failure we cannot trust partial mutations — surface the
+    // error loudly and refuse to flip currencyUnit or drop schemaVersion below 2's shape.
+    console.error('FinOS: migrateSchemaV2toV3 ABORTED, data left in rupees mode.', e);
+    if (typeof showToast === 'function') {
+      showToast('❌ Currency migration failed — data kept in original format. Check console & report this.', 'red');
+    }
+    return originalData; // untouched — `working` (the mutated clone) is discarded entirely
+  }
+}
+
+// ---- toMinor / fromMinor ----
+// Converts between "major" units (rupees, what the UI shows) and "minor"
+// units (paise, what a future migration will store). While
+// db.metadata.currencyUnit === 'rupees', both are identity pass-throughs —
+// do NOT multiply/divide by 100 yet. When currencyUnit flips to 'paise' in
+// a later patch, toMinor() will round(rupees*100) and fromMinor() will
+// divide by 100; every other function in this file should already be
+// calling these instead of doing the arithmetic inline, so that's the only
+// place the behavior needs to change.
+function toMinor(amount) {
+  if ((db.metadata && db.metadata.currencyUnit) === 'paise') {
+    return Math.round((parseFloat(amount) || 0) * 100);
+  }
+  return amount; // rupees mode (current): no-op
+}
+
+function fromMinor(amount) {
+  if ((db.metadata && db.metadata.currencyUnit) === 'paise') {
+    return (parseFloat(amount) || 0) / 100;
+  }
+  return amount; // rupees mode (current): no-op
+}
+
+// ---- roundMoney ----
+// Drop-in replacement for the `+value.toFixed(2)` pattern used throughout
+// PATCH 1-3 (calcCashback, effectiveCashback, refund math, invariant
+// checks, CSV export). Returns a Number, not a string, matching what the
+// `+(...).toFixed(2)` call sites actually did. In rupees mode this rounds
+// to 2 decimal places (paise-level precision within a rupee float) —
+// identical output to before. Once currencyUnit becomes 'paise', this
+// becomes a whole-integer round instead (no sub-paise unit exists).
+function roundMoney(n) {
+  if ((db.metadata && db.metadata.currencyUnit) === 'paise') {
+    return Math.round(parseFloat(n));
+  }
+  return +(Number(n).toFixed(2));
+}
+
+// ---- fmtMoney ----
+// Canonical money display formatter — every fmt(...) call site in the app
+// was mechanically switched to fmtMoney(...) in PATCH 4. Behavior is
+// byte-for-byte identical to the old fmt(): same ₹ prefix, same
+// toLocaleString('en-IN') grouping, same NaN fallback. The only change is
+// this is now the ONE place that will need to call fromMinor() first, once
+// stored amounts move to paise.
+function fmtMoney(n) {
+  const num = parseFloat(fromMinor(n));
+  if (isNaN(num)) return '₹0';
+  return '₹' + num.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+}
+
+// Deprecated alias — kept only so nothing external (bookmarklets, console
+// snippets, a missed call site) breaks. Every internal call site in this
+// file now uses fmtMoney() directly; do not add new calls to fmt().
+function fmt(n) { return fmtMoney(n); }
+
 function escapeHtml(str) { return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function fmtPct(n) { return Number(n||0).toFixed(1) + '%'; }
 let _uidCounter = 0;
@@ -1670,21 +2257,11 @@ function getCatEmoji(cat) {
 function getCardById(id) { return db.cards.find(c => c.id === id); }
 
 
-function calculateCardOutstanding(cardId) {
-  const txOutstanding = db.transactions
-    .filter(t => t.card === cardId)
-    .reduce((sum, t) => {
-      if (t.type === 'expense') return sum + t.amount;
-      if (t.type === 'refund') return sum - t.amount;
-      if (t.type === 'payment') return sum - t.amount; // EMI/card payment reduces outstanding
-      return sum;
-    }, 0);
-  // Include active EMI outstanding on this card
-  const emiOutstanding = (db.emis || [])
-    .filter(e => e.card === cardId && e.active && e.remaining > 0)
-    .reduce((sum, e) => sum + (e.amount * e.remaining), 0);
-  return Math.max(0, txOutstanding) + emiOutstanding;
-}
+// ===== PATCH 5 DELETE: calculateCardOutstanding() removed. Confirmed dead — the only
+// reference to `outstanding` anywhere in this file was this function's own definition plus
+// the `outstanding:0` field it would have read (also deleted, from DEFAULT_CARDS and
+// saveCard()). Card outstanding balances are computed by the statement cycle engine instead
+// (getCardSnapshot().totalOutstanding), which this function never fed into. =====
 
 // ============================================================
 // STATEMENT CYCLE ENGINE (per-card billing cycles, min-due, FIFO pay)
@@ -1753,7 +2330,7 @@ function syncStatementCycles() {
         paymentPool -= applied;
         c.paid = applied;
         c.remaining = Math.max(0, c.statementAmount - applied);
-        c.status = c.remaining <= 0.5 ? 'paid' : (c.dueDate < todayStr ? 'overdue' : 'closed');
+        c.status = c.remaining <= MONEY_EPSILON ? 'paid' : (c.dueDate < todayStr ? 'overdue' : 'closed');
         c.unbilled = 0;
         if (c.status === 'overdue') {
           const daysOverdue = Math.max(0, Math.floor((new Date(todayStr) - new Date(c.dueDate)) / 86400000));
@@ -1798,10 +2375,10 @@ function getStatementHistory(cardId) {
 function assertCycleInvariants(cycles) {
   const problems = [];
   cycles.forEach(c => {
-    if (c.remaining < -0.5) problems.push(`${c.cycleId}: negative remaining (${c.remaining})`);
+    if (c.remaining < -MONEY_EPSILON) problems.push(`${c.cycleId}: negative remaining (${c.remaining})`);
     if (c.status !== 'open') {
       const drift = Math.abs((c.paid + c.remaining) - c.statementAmount);
-      if (drift > 1) problems.push(`${c.cycleId}: paid+remaining drift from statementAmount (Δ${drift.toFixed(2)})`);
+      if (drift > INVARIANT_DRIFT) problems.push(`${c.cycleId}: paid+remaining drift from statementAmount (Δ${roundMoney(drift)})`);
     }
     if (c.minDue < 0) problems.push(`${c.cycleId}: negative minDue`);
   });
@@ -1927,7 +2504,7 @@ function calcCashback(tx) {
     ? (card.onlineCashbackPct || card.cashbackPct || 0)
     : (card.cashbackPct || 0);
 
-  const value = +(tx.amount * pct / 100).toFixed(2);
+  const value = roundMoney(tx.amount * pct / 100);
 
   return tx.type === 'refund'
     ? -value
@@ -1964,8 +2541,11 @@ function openQuickEmiPurchase() {
 
 function saveQuickEmiPurchase() {
   const product = document.getElementById('qeProduct').value.trim();
-  const total = parseFloat(document.getElementById('qePrice').value);
-  const monthly = parseFloat(document.getElementById('qeMonthly').value);
+  // ===== PATCH 5: qePrice/qeMonthly are rupee inputs — convert to storage units up front so
+  // every downstream use (EMI record, transaction record, totalAmount fallback math) is
+  // already storage-unit consistent. =====
+  const total = toMinor(parseFloat(document.getElementById('qePrice').value));
+  const monthly = toMinor(parseFloat(document.getElementById('qeMonthly').value));
   const months = parseInt(document.getElementById('qeMonths').value);
   const card = document.getElementById('qeCard').value;
   const date = document.getElementById('qeDate').value;
@@ -2039,7 +2619,7 @@ function processQuickAdd() {
   saveParsedTransaction(parsed);
   document.getElementById('quickInput').value = '';
   document.getElementById('smartPreview').innerHTML = 'Try: <span>500 blinkit sbi</span> · <span>refund 200 amazon</span> · <span>149 spotify hdfc</span>';
-  showToast(`✅ Added: ${parsed.merchant} ${fmt(parsed.amount)}`, 'green');
+  showToast(`✅ Added: ${parsed.merchant} ${fmtMoney(parsed.amount)}`, 'green');
   renderPage(currentPage);
 }
 
@@ -2056,7 +2636,9 @@ function parseQuickInput(raw) {
 
   if (!amountMatch) return null;
 
-  const amount = parseFloat(amountMatch[1]);
+  // ===== PATCH 5: free-text amount is always what the user typed in rupees — convert once
+  // here so cashbackAmt/netSpend/rewardPoints computed below are storage-unit consistent. =====
+  const amount = toMinor(parseFloat(amountMatch[1]));
 
   let cardId = '';
 
@@ -2117,7 +2699,7 @@ function parseQuickInput(raw) {
 
   const cashbackAmt = type === 'refund'
     ? 0
-    : +(amount * cashbackPct / 100).toFixed(2);
+    : roundMoney(amount * cashbackPct / 100);
 
   // If user doesn't provide date, today's date is used automatically
   let txDate = today();
@@ -2148,7 +2730,7 @@ function parseQuickInput(raw) {
       : amount - cashbackAmt,
     notes: '',
     tags: online ? ['online'] : [],
-    rewardPoints: card ? Math.floor(amount / 100) : 0
+    rewardPoints: calculateRewardPoints(amount, card)
   };
 }
 
@@ -2164,9 +2746,9 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     const p = parseQuickInput(raw);
     if (p) {
-      const cbStr = p.cashbackAmt > 0 ? ` · <span style="color:var(--green)">Cashback: ${fmt(p.cashbackAmt)}</span>` : '';
+      const cbStr = p.cashbackAmt > 0 ? ` · <span style="color:var(--green)">Cashback: ${fmtMoney(p.cashbackAmt)}</span>` : '';
       document.getElementById('smartPreview').innerHTML =
-        `<span>${p.type === 'refund' ? '↩️ Refund' : '💸 Expense'}</span> · <span>${p.merchant}</span> · <span>${fmt(p.amount)}</span> · <span>${p.category}</span> · <span>${getCardLabel(p.card) || 'UPI'}</span>${cbStr}`;
+        `<span>${p.type === 'refund' ? '↩️ Refund' : '💸 Expense'}</span> · <span>${p.merchant}</span> · <span>${fmtMoney(p.amount)}</span> · <span>${p.category}</span> · <span>${getCardLabel(p.card) || 'UPI'}</span>${cbStr}`;
     } else {
       document.getElementById('smartPreview').textContent = 'Could not understand — try: 500 amazon sbi';
     }
@@ -2198,7 +2780,7 @@ function openAddModal(prefill) {
   // Set date
   document.getElementById('fDate').value = prefill ? prefill.date : today();
   if (prefill) {
-    document.getElementById('fAmount').value = prefill.amount;
+    document.getElementById('fAmount').value = fromMinor(prefill.amount); // ===== PATCH 5
     document.getElementById('fMerchant').value = prefill.merchant;
     document.getElementById('fCategory').value = prefill.category;
     document.getElementById('fCard').value = prefill.card || '';
@@ -2223,7 +2805,9 @@ function autoDetectCategory() {
 }
 
 function updateSuggestion() {
-  const amt = parseFloat(document.getElementById('fAmount').value) || 0;
+  // ===== PATCH 5: form field is rupees; convert to storage units before any money math
+  // (roundMoney/fmtMoney below expect storage-unit input, same as saveTransaction()) =====
+  const amt = toMinor(parseFloat(document.getElementById('fAmount').value) || 0);
   if (!amt) { document.getElementById('suggestionBanner').style.display='none'; return; }
   const merchant = document.getElementById('fMerchant').value;
   const online = ONLINE_KEYWORDS.some(k => merchant.toLowerCase().includes(k));
@@ -2235,10 +2819,10 @@ function updateSuggestion() {
       if (cb > bestCb) { bestCb = cb; best = c; }
     });
     if (best && bestCb > 0) {
-      const cbAmt = +(amt * bestCb / 100).toFixed(2);
+      const cbAmt = roundMoney(amt * bestCb / 100);
       document.getElementById('suggestionBanner').style.display = 'block';
       document.getElementById('suggestionBanner').innerHTML =
-        `💡 Use <strong>${best.bank} ${best.name}</strong> for max cashback: <strong>${fmt(cbAmt)} (${bestCb}%)</strong>`;
+        `💡 Use <strong>${best.bank} ${best.name}</strong> for max cashback: <strong>${fmtMoney(cbAmt)} (${bestCb}%)</strong>`;
     }
   } else {
     document.getElementById('suggestionBanner').style.display='none';
@@ -2246,10 +2830,14 @@ function updateSuggestion() {
 }
 
 function saveTransaction() {
-  const amount = parseFloat(document.getElementById('fAmount').value);
+  // ===== PATCH 5: fAmountRupees is what the user typed (form always shows/accepts rupees).
+  // `amount` (storage unit) is what gets persisted and compared against MAX_TRANSACTION_AMOUNT,
+  // which was itself rescaled to storage units — see MAX_TRANSACTION_AMOUNT definition. =====
+  const fAmountRupees = parseFloat(document.getElementById('fAmount').value);
+  const amount = toMinor(fAmountRupees);
   const merchant = document.getElementById('fMerchant').value.trim();
-  if (!amount || isNaN(amount) || amount <= 0) { showToast('❌ Valid amount required', 'red'); return; }
-  if (amount > 10000000) { showToast('❌ Amount seems too large', 'red'); return; }
+  if (!fAmountRupees || isNaN(fAmountRupees) || fAmountRupees <= 0) { showToast('❌ Valid amount required', 'red'); return; }
+  if (amount > MAX_TRANSACTION_AMOUNT) { showToast('❌ Amount seems too large', 'red'); return; }
   if (!merchant) { showToast('❌ Merchant required', 'red'); return; }
   const type = document.getElementById('fType').value;
   const cardId = document.getElementById('fCard').value;
@@ -2259,7 +2847,7 @@ function saveTransaction() {
     const online = ONLINE_KEYWORDS.some(k => merchant.toLowerCase().includes(k));
     if (card) cbPct = online ? (card.onlineCashbackPct || card.cashbackPct || 0) : (card.cashbackPct || 0);
   }
-  const cbAmt = type === 'refund' ? 0 : +(amount * cbPct / 100).toFixed(2);
+  const cbAmt = type === 'refund' ? 0 : roundMoney(amount * cbPct / 100);
   const tx = {
     id: editingTxId || uid(),
     date: document.getElementById('fDate').value || today(),
@@ -2275,7 +2863,7 @@ function saveTransaction() {
     netSpend: type === 'refund' ? -amount : amount - cbAmt,
     notes: document.getElementById('fNotes').value,
     tags: document.getElementById('fTags').value.split(',').map(t=>t.trim()).filter(Boolean),
-    rewardPoints: getCardById(cardId) ? Math.floor(amount/100) : 0
+    rewardPoints: calculateRewardPoints(amount, getCardById(cardId))
   };
   if (editingTxId) {
     const idx = db.transactions.findIndex(t => t.id === editingTxId);
@@ -2286,7 +2874,7 @@ function saveTransaction() {
   }
   saveDB();
   closeModal('addModal');
-  showToast(`✅ Transaction saved: ${fmt(amount)}`, 'green');
+  showToast(`✅ Transaction saved: ${fmtMoney(amount)}`, 'green');
   renderPage(currentPage);
 }
 
@@ -2325,7 +2913,7 @@ function effectiveCashback(tx, refundMap) {
       .reduce((s,r) => s+r.amount, 0);
   }
   const refundRatio = Math.min(totalRefunded / tx.amount, 1);
-  return +(originalCashback * (1 - refundRatio)).toFixed(2);
+  return roundMoney(originalCashback * (1 - refundRatio));
 }
 
 
@@ -2347,25 +2935,25 @@ function renderDashboard() {
   document.getElementById('dashStats').innerHTML = `
     <div class="stat-card">
       <div class="label">Total Spend</div>
-      <div class="value">${fmt(totalSpend)}</div>
+      <div class="value">${fmtMoney(totalSpend)}</div>
       <div class="sub">Current Month</div>
     </div>
 
     <div class="stat-card">
       <div class="label">Cashback</div>
-      <div class="value text-green">${fmt(cashback)}</div>
+      <div class="value text-green">${fmtMoney(cashback)}</div>
       <div class="sub">Estimated Rewards</div>
     </div>
 
     <div class="stat-card">
       <div class="label">Refunds</div>
-      <div class="value text-orange">${fmt(totalRefund)}</div>
+      <div class="value text-orange">${fmtMoney(totalRefund)}</div>
       <div class="sub">Total Refund Received</div>
     </div>
 
     <div class="stat-card">
       <div class="label">Net Spend After Cashback</div>
-      <div class="value">${fmt(totalSpend - totalRefund - cashback)}</div>
+      <div class="value">${fmtMoney(totalSpend - totalRefund - cashback)}</div>
       <div class="sub">Actual Expense</div>
     </div>
   `;
@@ -2397,11 +2985,11 @@ function renderDashboard() {
           <div style="display:flex;align-items:center;gap:5px;margin-top:2px;">
             <span style="font-size:10px;background:rgba(79,142,247,0.1);color:var(--accent);padding:1px 5px;border-radius:3px;">${catShort}</span>
             <span style="font-size:10px;color:var(--text3);">${cardLabel}</span>
-            ${cb > 0 ? `<span style="font-size:10px;color:var(--green);">+${fmt(cb)}</span>` : ''}
+            ${cb > 0 ? `<span style="font-size:10px;color:var(--green);">+${fmtMoney(cb)}</span>` : ''}
           </div>
         </div>
         <div style="text-align:right;flex-shrink:0;">
-          <div style="font-size:14px;font-weight:700;color:${amtColor};">${amtSign}${fmt(t.amount)}</div>
+          <div style="font-size:14px;font-weight:700;color:${amtColor};">${amtSign}${fmtMoney(t.amount)}</div>
         </div>
       </div>`;
     }).join('') + `<div style="padding:8px 16px;"><button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;" onclick="navigate('transactions')">View All Transactions →</button></div>`
@@ -2437,7 +3025,7 @@ function renderDashboard() {
               </div>
             </div>
 
-            <div class="cat-amount">${fmt(val)}</div>
+            <div class="cat-amount">${fmtMoney(val)}</div>
           </div>
         `;
       }).join('')
@@ -2508,13 +3096,13 @@ function renderDashboard() {
       // EMI label: pending shows current month, paid shows next month upcoming
       let emiLabel = '';
       if (pendingEmiMonthly > 0 && autoEmiPaidAmt > 0) {
-        emiLabel = `EMI: <span style="color:var(--green);">✓ ${fmt(autoEmiPaidAmt)} paid</span> + <span style="color:var(--orange);">${fmt(pendingEmiMonthly)} ${curMonthName} pending</span>`;
+        emiLabel = `EMI: <span style="color:var(--green);">✓ ${fmtMoney(autoEmiPaidAmt)} paid</span> + <span style="color:var(--orange);">${fmtMoney(pendingEmiMonthly)} ${curMonthName} pending</span>`;
       } else if (pendingEmiMonthly > 0) {
-        emiLabel = `EMI: <span style="color:var(--orange);">₹${fmt(pendingEmiMonthly)} — ${curMonthName} pending</span>`;
+        emiLabel = `EMI: <span style="color:var(--orange);">₹${fmtMoney(pendingEmiMonthly)} — ${curMonthName} pending</span>`;
       } else if (autoEmiPaidAmt > 0 && cardActiveEmis.length > 0) {
         // All this month paid — show next month
         const nextAmt = cardActiveEmis.reduce((s,e)=>s+e.amount,0);
-        emiLabel = `EMI: <span style="color:var(--green);">✓ ${curMonthName} paid</span> · <span style="color:var(--text3);">Next: ${nextMonthName} ${fmt(nextAmt)}</span>`;
+        emiLabel = `EMI: <span style="color:var(--green);">✓ ${curMonthName} paid</span> · <span style="color:var(--text3);">Next: ${nextMonthName} ${fmtMoney(nextAmt)}</span>`;
       }
 
       upcomingHtml += `
@@ -2526,14 +3114,14 @@ function renderDashboard() {
               Bill: <span style="color:var(--text2);">${billDay}th</span> &nbsp;·&nbsp; Due: <span style="color:var(--orange);">${dueDay}th</span>
             </div>
             <div style="font-size:10px;color:var(--text3);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap;">
-              ${monthExpenses > 0 ? `<span>Spend: <span style="color:var(--text2);">${fmt(monthExpenses)}</span></span>` : ''}
-              ${monthRefunds > 0 ? `<span>Refund: <span style="color:var(--green);">-${fmt(monthRefunds)}</span></span>` : ''}
+              ${monthExpenses > 0 ? `<span>Spend: <span style="color:var(--text2);">${fmtMoney(monthExpenses)}</span></span>` : ''}
+              ${monthRefunds > 0 ? `<span>Refund: <span style="color:var(--green);">-${fmtMoney(monthRefunds)}</span></span>` : ''}
               ${emiLabel ? `<span>${emiLabel}</span>` : ''}
-              ${monthCashback > 0 ? `<span>CB: <span style="color:var(--green);">-${fmt(monthCashback)}</span></span>` : ''}
+              ${monthCashback > 0 ? `<span>CB: <span style="color:var(--green);">-${fmtMoney(monthCashback)}</span></span>` : ''}
             </div>
           </div>
           <div style="text-align:right;flex-shrink:0;">
-            <div style="font-size:15px;font-weight:700;color:${pendingEmiMonthly>0||monthSpend>0?'var(--red)':'var(--green)'};">${pendingEmiMonthly>0||monthSpend>0?fmt(Math.max(0,totalBill)):'✓ Paid'}</div>
+            <div style="font-size:15px;font-weight:700;color:${pendingEmiMonthly>0||monthSpend>0?'var(--red)':'var(--green)'};">${pendingEmiMonthly>0||monthSpend>0?fmtMoney(Math.max(0,totalBill)):'✓ Paid'}</div>
             <div style="font-size:10px;color:var(--text3);">${pendingEmiMonthly>0||monthSpend>0?'net payable':'this month'}</div>
           </div>
         </div>`;
@@ -2559,7 +3147,7 @@ function renderDashboard() {
           <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.merchant}</div>
           <div style="font-size:11px;color:var(--text3);margin-top:2px;">${cardLabel} &nbsp;·&nbsp; <span style="color:var(--purple);">Monthly</span></div>
         </div>
-        <div style="font-size:14px;font-weight:700;color:var(--red);flex-shrink:0;">-${fmt(s.amount)}</div>
+        <div style="font-size:14px;font-weight:700;color:var(--red);flex-shrink:0;">-${fmtMoney(s.amount)}</div>
       </div>`;
     }).join('')
     :
@@ -2585,8 +3173,8 @@ function renderDashboard() {
           <div style="font-size:10px;color:var(--text3);margin-top:2px;">${cardLabel}</div>
         </div>
         <div style="text-align:right;flex-shrink:0;">
-          <div style="font-size:14px;font-weight:700;color:var(--orange);">${fmt(e.amount)}/mo</div>
-          <div style="font-size:10px;color:var(--text3);">${fmt(e.amount*e.remaining)} left</div>
+          <div style="font-size:14px;font-weight:700;color:var(--orange);">${fmtMoney(e.amount)}/mo</div>
+          <div style="font-size:10px;color:var(--text3);">${fmtMoney(e.amount*e.remaining)} left</div>
         </div>
       </div>`;
     }).join('') + (activeEmis.length > 2 ? `<div style="padding-top:8px;"><button class="btn btn-ghost btn-sm" style="width:100%;justify-content:center;" onclick="navigate('emis')">View All EMIs →</button></div>` : '')
@@ -2607,9 +3195,9 @@ function renderDashboard() {
           <div style="font-size:13px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${f.name}</div>
           <div style="font-size:11px;color:var(--text3);margin-top:2px;">${cardLabel}${f.dueDay?` · Due: <span style="color:var(--orange);">${f.dueDay}th</span>`:''}</div>
         </div>
-        <div style="font-size:14px;font-weight:700;color:var(--yellow);flex-shrink:0;">${fmt(f.amount)}</div>
+        <div style="font-size:14px;font-weight:700;color:var(--yellow);flex-shrink:0;">${fmtMoney(f.amount)}</div>
       </div>`;
-    }).join('') + `<div style="padding:8px 0 0;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:11px;color:var(--text3);">Total: <span style="color:var(--yellow);font-weight:700;">${fmt(fixedTotal)}/mo</span></span>${fixedList.length>3?`<button class="btn btn-ghost btn-sm" onclick="navigate('fixedspends')">View All →</button>`:''}</div>`
+    }).join('') + `<div style="padding:8px 0 0;display:flex;justify-content:space-between;align-items:center;"><span style="font-size:11px;color:var(--text3);">Total: <span style="color:var(--yellow);font-weight:700;">${fmtMoney(fixedTotal)}/mo</span></span>${fixedList.length>3?`<button class="btn btn-ghost btn-sm" onclick="navigate('fixedspends')">View All →</button>`:''}</div>`
     :
     '<div class="empty-state" style="padding:16px;text-align:center;color:var(--text3);font-size:12px;">No fixed spends added</div>';
 
@@ -2661,9 +3249,9 @@ function renderDashboard() {
               <div class="progress-fill" style="width:${Math.min(util,100)}%;background:${utilColor};"></div>
             </div>
             <div style="display:flex;justify-content:space-between;">
-              <span style="font-size:11px;color:var(--text3);">Due: <span style="color:var(--red);font-weight:600;">${fmt(outstanding)}</span></span>
-              <span style="font-size:11px;color:var(--text3);">Avail: <span style="color:var(--green);font-weight:600;">${fmt(available)}</span></span>
-              ${emiOutstanding>0?`<span style="font-size:10px;color:var(--orange);">EMI: ${fmt(emiOutstanding)}</span>`:''}
+              <span style="font-size:11px;color:var(--text3);">Due: <span style="color:var(--red);font-weight:600;">${fmtMoney(outstanding)}</span></span>
+              <span style="font-size:11px;color:var(--text3);">Avail: <span style="color:var(--green);font-weight:600;">${fmtMoney(available)}</span></span>
+              ${emiOutstanding>0?`<span style="font-size:10px;color:var(--orange);">EMI: ${fmtMoney(emiOutstanding)}</span>`:''}
             </div>
           </div>
         </div>`;
@@ -2736,9 +3324,9 @@ function renderTxItems(txs, showDate=false) {
     const dayRefunds  = groups[date].filter(t=>t.type==='refund').reduce((s,t)=>s+t.amount,0);
     const dayNet = dayExpenses - dayRefunds;
     const dayLabel = dayExpenses>0 && dayRefunds>0
-      ? `<span style="color:var(--red);">${fmt(dayExpenses)}</span><span style="color:var(--text3);margin:0 2px;"> · </span><span style="color:var(--green);">+${fmt(dayRefunds)}</span>`
-      : dayExpenses>0 ? `<span style="color:var(--text2);">${fmt(dayExpenses)}</span>`
-      : dayRefunds>0  ? `<span style="color:var(--green);">+${fmt(dayRefunds)}</span>` : '';
+      ? `<span style="color:var(--red);">${fmtMoney(dayExpenses)}</span><span style="color:var(--text3);margin:0 2px;"> · </span><span style="color:var(--green);">+${fmtMoney(dayRefunds)}</span>`
+      : dayExpenses>0 ? `<span style="color:var(--text2);">${fmtMoney(dayExpenses)}</span>`
+      : dayRefunds>0  ? `<span style="color:var(--green);">+${fmtMoney(dayRefunds)}</span>` : '';
     return `
       <div style="margin-bottom:4px;">
         <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px 4px;position:sticky;top:0;background:var(--surface);z-index:1;">
@@ -2774,13 +3362,13 @@ function renderSingleTxItem(tx, showDate=false) {
       <div style="display:flex;align-items:center;gap:5px;margin-top:2px;flex-wrap:nowrap;overflow:hidden;">
         <span style="font-size:10px;background:rgba(79,142,247,0.1);color:var(--accent);padding:1px 5px;border-radius:3px;white-space:nowrap;flex-shrink:0;">${catShort}</span>
         <span style="font-size:10px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${cardLabel}</span>
-        ${cb > 0 ? `<span style="font-size:10px;color:var(--green);flex-shrink:0;">+${fmt(cb)}</span>` : ''}
+        ${cb > 0 ? `<span style="font-size:10px;color:var(--green);flex-shrink:0;">+${fmtMoney(cb)}</span>` : ''}
       </div>
     </div>
     <div style="text-align:right;flex-shrink:0;">
-      <div style="font-size:14px;font-weight:700;color:${amtColor};">${amtSign}${fmt(tx.amount)}</div>
+      <div style="font-size:14px;font-weight:700;color:${amtColor};">${amtSign}${fmtMoney(tx.amount)}</div>
       ${isEmiPay ? `<div style="font-size:10px;color:var(--text3);">installment</div>` : ''}
-      ${cb > 0 ? `<div style="font-size:10px;color:var(--green);">cb: ${fmt(cb)}</div>` : ''}
+      ${cb > 0 ? `<div style="font-size:10px;color:var(--green);">cb: ${fmtMoney(cb)}</div>` : ''}
     </div>
   </div>`;
 }
@@ -2793,7 +3381,7 @@ function showTxDetail(id) {
     <div style="text-align:center;margin-bottom:20px;">
       <div style="font-size:48px;margin-bottom:10px;">${tx.type==='refund'?'↩️':getCatEmoji(tx.category)}</div>
       <div style="font-family:var(--font-head);font-size:24px;font-weight:700;color:${tx.type==='refund'?'var(--green)':'var(--red)'};">
-        ${tx.type==='refund'?'+':'-'}${fmt(tx.amount)}
+        ${tx.type==='refund'?'+':'-'}${fmtMoney(tx.amount)}
       </div>
       <div style="font-size:16px;font-weight:600;margin-top:4px;">${tx.merchant}</div>
       <div style="font-size:12px;color:var(--text3);margin-top:4px;">${new Date(tx.date).toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</div>
@@ -2801,8 +3389,8 @@ function showTxDetail(id) {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
       ${detailRow('Category', tx.category?.split(' > ').pop() || 'N/A')}
       ${detailRow('Payment', card ? `${card.bank} ${card.name}` : (tx.paymentMode||'UPI'))}
-      ${detailRow('Cashback', effectiveCashback(tx) > 0 ? `${fmt(effectiveCashback(tx))} (${tx.cashbackPct}%)` : 'None', effectiveCashback(tx) > 0 ? 'green' : '')}
-      ${detailRow('Net Spend', fmt(Math.abs(tx.netSpend)))}
+      ${detailRow('Cashback', effectiveCashback(tx) > 0 ? `${fmtMoney(effectiveCashback(tx))} (${tx.cashbackPct}%)` : 'None', effectiveCashback(tx) > 0 ? 'green' : '')}
+      ${detailRow('Net Spend', fmtMoney(Math.abs(tx.netSpend)))}
       ${tx.rewardPoints ? detailRow('Reward Points', `+${tx.rewardPoints}`) : ''}
       ${tx.tags?.length ? detailRow('Tags', tx.tags.join(', ')) : ''}
     </div>
@@ -2848,7 +3436,7 @@ function openRefundModal(txId) {
   const alreadyRefunded = db.transactions
     .filter(r => r.type === 'refund' && r._linkedTxId === txId)
     .reduce((s, r) => s + r.amount, 0);
-  const maxRefund = +(tx.amount - alreadyRefunded).toFixed(2);
+  const maxRefund = roundMoney(tx.amount - alreadyRefunded);
 
   if (maxRefund <= 0) { showToast('⚠️ Full refund already processed', 'red'); return; }
 
@@ -2856,14 +3444,14 @@ function openRefundModal(txId) {
   const cbPct = tx.cashbackPct || 0;
 
   document.getElementById('refundModalMerchant').textContent = tx.merchant;
-  document.getElementById('refundOriginalAmt').textContent = fmt(tx.amount);
-  document.getElementById('refundAlreadyRefunded').textContent = fmt(alreadyRefunded);
-  document.getElementById('refundMaxAmt').textContent = fmt(maxRefund);
-  document.getElementById('refundOrigCashback').textContent = fmt(origCb) + (cbPct > 0 ? ' (' + cbPct + '%)' : '');
+  document.getElementById('refundOriginalAmt').textContent = fmtMoney(tx.amount);
+  document.getElementById('refundAlreadyRefunded').textContent = fmtMoney(alreadyRefunded);
+  document.getElementById('refundMaxAmt').textContent = fmtMoney(maxRefund);
+  document.getElementById('refundOrigCashback').textContent = fmtMoney(origCb) + (cbPct > 0 ? ' (' + cbPct + '%)' : '');
 
   document.getElementById('refundType').value = 'full';
   document.getElementById('refundPartialGroup').style.display = 'none';
-  document.getElementById('refundAmount').value = maxRefund;
+  document.getElementById('refundAmount').value = fromMinor(maxRefund); // ===== PATCH 5: field shows rupees
   document.getElementById('refundDate').value = today();
 
   document.getElementById('refundModal').dataset.txId = txId;
@@ -2880,7 +3468,7 @@ function onRefundTypeChange() {
   const maxRefund = parseFloat(document.getElementById('refundModal').dataset.maxRefund) || 0;
   if (type === 'full') {
     document.getElementById('refundPartialGroup').style.display = 'none';
-    document.getElementById('refundAmount').value = maxRefund;
+    document.getElementById('refundAmount').value = fromMinor(maxRefund); // ===== PATCH 5: field shows rupees
   } else {
     document.getElementById('refundPartialGroup').style.display = 'block';
     document.getElementById('refundAmount').value = '';
@@ -2892,7 +3480,9 @@ function updateRefundPreview() {
   const modal = document.getElementById('refundModal');
   const origAmt = parseFloat(modal.dataset.origAmt) || 0;
   const origCb = parseFloat(modal.dataset.origCb) || 0;
-  const refundAmt = parseFloat(document.getElementById('refundAmount').value) || 0;
+  // ===== PATCH 5: refundAmount field is rupees (user-facing); dataset values are already
+  // storage units — convert the field read so all three are in the same unit before math. =====
+  const refundAmt = toMinor(parseFloat(document.getElementById('refundAmount').value) || 0);
 
   if (!origAmt || refundAmt <= 0) {
     document.getElementById('refundCbLost').textContent = '—';
@@ -2901,12 +3491,12 @@ function updateRefundPreview() {
     return;
   }
 
-  const cbLost = +(origCb * (refundAmt / origAmt)).toFixed(2);
-  const netCb = +(origCb - cbLost).toFixed(2);
+  const cbLost = roundMoney(origCb * (refundAmt / origAmt));
+  const netCb = roundMoney(origCb - cbLost);
 
-  document.getElementById('refundCbLost').textContent = fmt(cbLost);
-  document.getElementById('refundCbPreview').textContent = fmt(netCb);
-  document.getElementById('refundNetPreview').textContent = fmt(origAmt - refundAmt);
+  document.getElementById('refundCbLost').textContent = fmtMoney(cbLost);
+  document.getElementById('refundCbPreview').textContent = fmtMoney(netCb);
+  document.getElementById('refundNetPreview').textContent = fmtMoney(origAmt - refundAmt);
 }
 
 function saveRefund() {
@@ -2916,11 +3506,13 @@ function saveRefund() {
   const origAmt = parseFloat(modal.dataset.origAmt) || 0;
   const origCb = parseFloat(modal.dataset.origCb) || 0;
 
-  const refundAmt = parseFloat(document.getElementById('refundAmount').value);
+  // ===== PATCH 5: refundAmount field is rupees; maxRefund/origAmt/origCb dataset values are
+  // already storage units — convert the field read so the comparison/storage below is consistent.
+  const refundAmt = toMinor(parseFloat(document.getElementById('refundAmount').value));
   const refundDate = document.getElementById('refundDate').value || today();
 
   if (!refundAmt || refundAmt <= 0) { showToast('❌ Enter refund amount', 'red'); return; }
-  if (refundAmt > maxRefund + 0.01) { showToast('❌ Max refund is ' + fmt(maxRefund), 'red'); return; }
+  if (refundAmt > maxRefund + REFUND_TOLERANCE) { showToast('❌ Max refund is ' + fmtMoney(maxRefund), 'red'); return; }
 
   const originalTx = db.transactions.find(t => t.id === txId);
   if (!originalTx) return;
@@ -2929,7 +3521,7 @@ function saveRefund() {
     originalTx._originalCashbackAmt = originalTx.cashbackAmt || 0;
   }
 
-  const cbLost = +(origCb * (refundAmt / origAmt)).toFixed(2);
+  const cbLost = roundMoney(origCb * (refundAmt / origAmt));
 
   const refundTx = {
     id: uid(),
@@ -2943,7 +3535,7 @@ function saveRefund() {
     cashbackPct: 0,
     cashbackAmt: 0,
     netSpend: -refundAmt,
-    notes: 'Refund for ' + originalTx.merchant + ' (orig: ' + fmt(origAmt) + ')',
+    notes: 'Refund for ' + originalTx.merchant + ' (orig: ' + fmtMoney(origAmt) + ')',
     tags: ['refund'],
     rewardPoints: 0,
     _linkedTxId: txId,
@@ -2957,12 +3549,12 @@ function saveRefund() {
     .filter(r => r.type === 'refund' && r._linkedTxId === txId)
     .reduce((s, r) => s + (r._cbLost || 0), 0);
 
-  originalTx.cashbackAmt = Math.max(0, +(originalTx._originalCashbackAmt - totalCbLost).toFixed(2));
-  originalTx.netSpend = +(originalTx.amount - originalTx.cashbackAmt).toFixed(2);
+  originalTx.cashbackAmt = Math.max(0, roundMoney(originalTx._originalCashbackAmt - totalCbLost));
+  originalTx.netSpend = roundMoney(originalTx.amount - originalTx.cashbackAmt);
 
   saveDB();
   closeModal('refundModal');
-  showToast('✅ Refund ' + fmt(refundAmt) + ' added · Cashback adjusted -' + fmt(cbLost), 'green');
+  showToast('✅ Refund ' + fmtMoney(refundAmt) + ' added · Cashback adjusted -' + fmtMoney(cbLost), 'green');
   renderPage(currentPage);
 }
 
@@ -2989,8 +3581,8 @@ function renderAnalytics(tab) {
         ${months.slice(-3).map(m => `
           <div class="stat-card">
             <div class="label">${monthLabel(m.month)}</div>
-            <div class="value text-red">${fmt(m.spend)}</div>
-            <div class="sub">Cashback: <span class="text-green">${fmt(m.cashback)}</span></div>
+            <div class="value text-red">${fmtMoney(m.spend)}</div>
+            <div class="sub">Cashback: <span class="text-green">${fmtMoney(m.cashback)}</span></div>
           </div>
         `).join('')}
       </div>
@@ -3006,8 +3598,8 @@ function renderAnalytics(tab) {
           <div class="tx-list">
             ${months.reverse().map(m => `
               <div class="tx-item" style="position:relative;">
-                <div class="tx-info"><div class="tx-merchant">${monthLabel(m.month)}</div><div class="tx-meta"><span>${m.count} transactions</span><span class="text-green">Cashback: ${fmt(m.cashback)}</span><span>Refunds: ${fmt(m.refunds)}</span></div></div>
-                <div class="tx-right"><div class="tx-amount debit">${fmt(m.spend)}</div><div class="tx-cashback">Net: ${fmt(m.net)}</div></div>
+                <div class="tx-info"><div class="tx-merchant">${monthLabel(m.month)}</div><div class="tx-meta"><span>${m.count} transactions</span><span class="text-green">Cashback: ${fmtMoney(m.cashback)}</span><span>Refunds: ${fmtMoney(m.refunds)}</span></div></div>
+                <div class="tx-right"><div class="tx-amount debit">${fmtMoney(m.spend)}</div><div class="tx-cashback">Net: ${fmtMoney(m.net)}</div></div>
               </div>
             `).join('')}
           </div>
@@ -3029,7 +3621,7 @@ function renderAnalytics(tab) {
             <div class="cat-row">
               <div class="cat-label">${getCatEmoji(cat)} ${cat.split(' > ').pop()}</div>
               <div class="cat-bar"><div class="progress-bar"><div class="progress-fill" style="width:${amt/total*100}%;background:${colors[i%colors.length]};"></div></div></div>
-              <div class="cat-amount">${fmt(amt)}</div>
+              <div class="cat-amount">${fmtMoney(amt)}</div>
             </div>
           `).join('')}
         </div>
@@ -3044,8 +3636,8 @@ function renderAnalytics(tab) {
         const rp = txs.reduce((s,t)=>s+(t.rewardPoints||0),0);
         return `<div class="stat-card">
           <div class="label">${card.bank} ${card.name}</div>
-          <div class="value">${fmt(spend)}</div>
-          <div class="sub">Cashback: <span class="text-green">${fmt(cb)}</span> · Points: ${rp}</div>
+          <div class="value">${fmtMoney(spend)}</div>
+          <div class="sub">Cashback: <span class="text-green">${fmtMoney(cb)}</span> · Points: ${rp}</div>
         </div>`;
       }).join('')}
     </div>`;
@@ -3079,7 +3671,7 @@ function renderBarChart(months) {
           <div style="width:100%;background:linear-gradient(180deg,var(--accent),var(--accent2));border-radius:6px 6px 0 0;height:${m.spend/max*100}%;min-height:4px;transition:height 0.5s;"></div>
         </div>
         <div style="font-size:9px;color:var(--text3);text-align:center;">${monthLabel(m.month).split(' ')[0]}</div>
-        <div style="font-size:9px;color:var(--text2);font-weight:600;">${fmt(m.spend).replace('₹','₹')}</div>
+        <div style="font-size:9px;color:var(--text2);font-weight:600;">${fmtMoney(m.spend).replace('₹','₹')}</div>
       </div>
     `).join('')}
   </div>`;
@@ -3141,32 +3733,32 @@ function renderCards() {
     const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
     const nowD = new Date();
     const nextEmiLabel = emiTotalLocked > 0 ? (emiPendingThisMonth > 0
-      ? MONTH_NAMES[nowD.getMonth()] + ' — ' + fmt(emiPendingThisMonth) + ' pending'
-      : MONTH_NAMES[(nowD.getMonth()+1)%12] + ' — ' + fmt(emiNextInstallment) + ' upcoming') : '';
+      ? MONTH_NAMES[nowD.getMonth()] + ' — ' + fmtMoney(emiPendingThisMonth) + ' pending'
+      : MONTH_NAMES[(nowD.getMonth()+1)%12] + ' — ' + fmtMoney(emiNextInstallment) + ' upcoming') : '';
     return `<div>
       <div class="cc-card" style="--c1:${colors[0]};--c2:${colors[1]};margin-bottom:16px;">
         <div class="cc-bank">${card.bank}${card.autoPay&&card.autoPay!=='none'?` <span style="font-size:9px;background:rgba(34,197,94,0.2);color:var(--green);padding:2px 6px;border-radius:10px;vertical-align:middle;">AUTO-PAY: ${card.autoPay.toUpperCase()}</span>`:''}</div>
         <div class="cc-name">${card.name}${card.last4?` · •• ${card.last4}`:''}</div>
         <div class="cc-limit">
           <div class="l">CREDIT LIMIT</div>
-          <div class="v">${fmt(card.limit)}</div>
+          <div class="v">${fmtMoney(card.limit)}</div>
         </div>
         <div class="cc-util">
           <div class="l">AVAILABLE</div>
-          <div class="v">${fmt(Math.max(0, card.limit - totalOutstanding))}</div>
+          <div class="v">${fmtMoney(Math.max(0, card.limit - totalOutstanding))}</div>
         </div>
       </div>
       <div class="panel">
         <div class="panel-body">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
-            <div><div style="font-size:10px;color:var(--text3);">This Month Spend</div><div style="font-size:16px;font-weight:700;color:var(--red);">${fmt(grossSpend)}${monthRefund>0?`<span style="font-size:11px;color:var(--green);font-weight:500;margin-left:4px;">-${fmt(monthRefund)}</span>`:''}</div></div>
-            <div><div style="font-size:10px;color:var(--text3);">Cashback Earned</div><div style="font-size:16px;font-weight:700;color:var(--green);">${fmt(cb)}</div></div>
+            <div><div style="font-size:10px;color:var(--text3);">This Month Spend</div><div style="font-size:16px;font-weight:700;color:var(--red);">${fmtMoney(grossSpend)}${monthRefund>0?`<span style="font-size:11px;color:var(--green);font-weight:500;margin-left:4px;">-${fmtMoney(monthRefund)}</span>`:''}</div></div>
+            <div><div style="font-size:10px;color:var(--text3);">Cashback Earned</div><div style="font-size:16px;font-weight:700;color:var(--green);">${fmtMoney(cb)}</div></div>
             <div><div style="font-size:10px;color:var(--text3);">Bill Date</div><div style="font-size:14px;font-weight:600;">${billDay}th</div></div>
             <div><div style="font-size:10px;color:var(--text3);">Due Date</div><div style="font-size:14px;font-weight:600;">${dueDay}th</div></div>
             ${emiTotalLocked > 0 ? `<div style="grid-column:1/-1;padding:10px;background:rgba(249,115,22,0.07);border-radius:6px;border:1px solid rgba(249,115,22,0.15);">
               <div style="font-size:10px;color:var(--text3);margin-bottom:4px;">EMI INSTALLMENT</div>
               <div style="font-size:14px;font-weight:700;color:var(--orange);">${nextEmiLabel}</div>
-              <div style="font-size:10px;color:var(--text3);margin-top:3px;">Bank locked: <span style="color:var(--orange);font-weight:600;">${fmt(emiTotalLocked)}</span> (${activeEmisOnCard.length} EMI · ${activeEmisOnCard.reduce((s,e)=>s+e.remaining,0)} installments left)</div>
+              <div style="font-size:10px;color:var(--text3);margin-top:3px;">Bank locked: <span style="color:var(--orange);font-weight:600;">${fmtMoney(emiTotalLocked)}</span> (${activeEmisOnCard.length} EMI · ${activeEmisOnCard.reduce((s,e)=>s+e.remaining,0)} installments left)</div>
             </div>` : ''}
             ${card.points ? `<div><div style="font-size:10px;color:var(--text3);">Reward Points</div><div style="font-size:14px;font-weight:600;color:var(--purple);">${card.points.toLocaleString()}</div></div>` : ''}
           </div>
@@ -3176,17 +3768,17 @@ function renderCards() {
               <span style="font-size:10px;font-weight:700;color:${stmtColor};text-transform:capitalize;">${stmtStatus}</span>
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
-              <div><div style="font-size:10px;color:var(--text3);">Amount Due</div><div style="font-size:14px;font-weight:700;color:${stmtColor};">${fmt(stmtAmt)}</div></div>
-              <div><div style="font-size:10px;color:var(--text3);">Min Due</div><div style="font-size:14px;font-weight:600;">${fmt(minDueAmt)}</div></div>
+              <div><div style="font-size:10px;color:var(--text3);">Amount Due</div><div style="font-size:14px;font-weight:700;color:${stmtColor};">${fmtMoney(stmtAmt)}</div></div>
+              <div><div style="font-size:10px;color:var(--text3);">Min Due</div><div style="font-size:14px;font-weight:600;">${fmtMoney(minDueAmt)}</div></div>
               <div><div style="font-size:10px;color:var(--text3);">Days Left</div><div style="font-size:14px;font-weight:600;color:${daysLeft!==null&&daysLeft<0?'var(--red)':'var(--text)'};">${daysLeft!==null?daysLeft:'—'}</div></div>
             </div>
-            ${interestAccrued>0?`<div style="margin-top:8px;font-size:11px;color:var(--red);">⚠️ Overdue interest accrued (est.): <strong>${fmt(interestAccrued)}</strong></div>`:''}
+            ${interestAccrued>0?`<div style="margin-top:8px;font-size:11px;color:var(--red);">⚠️ Overdue interest accrued (est.): <strong>${fmtMoney(interestAccrued)}</strong></div>`:''}
           </div>` : ''}
           <div style="margin-bottom:6px;display:flex;justify-content:space-between;font-size:12px;">
             <span>Utilization</span><span style="color:${utilColor};font-weight:600;">${fmtPct(util)}</span>
           </div>
           <div class="progress-bar" style="margin-bottom:4px;"><div class="progress-fill" style="width:${util}%;background:${utilColor};"></div></div>
-          ${emiTotalLocked>0?`<div style="font-size:10px;color:var(--text3);margin-bottom:8px;">Spend: <span style="color:var(--red);">${fmt(Math.max(0,cycleOutstanding))}</span> + EMI locked: <span style="color:var(--orange);">${fmt(emiTotalLocked)}</span></div>`:''}
+          ${emiTotalLocked>0?`<div style="font-size:10px;color:var(--text3);margin-bottom:8px;">Spend: <span style="color:var(--red);">${fmtMoney(Math.max(0,cycleOutstanding))}</span> + EMI locked: <span style="color:var(--orange);">${fmtMoney(emiTotalLocked)}</span></div>`:''}
           <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;">
             ${stmtAmt>0?`<button class="btn btn-primary btn-sm" onclick="openPayBillModal('${card.id}')">💳 Pay Bill</button>`:''}
             <button class="btn btn-ghost btn-sm" onclick="openStatementHistory('${card.id}')">📜 Statements</button>
@@ -3206,9 +3798,9 @@ function openPayBillModal(cardId) {
   const snap = getCardSnapshot(cardId);
   document.getElementById('pbCardId').value = cardId;
   document.getElementById('pbCardLabel').textContent = card.bank + ' ' + card.name;
-  document.getElementById('pbMinDue').textContent = fmt(snap.latestClosed ? snap.latestClosed.minDue : 0);
-  document.getElementById('pbStatementAmt').textContent = fmt(snap.latestClosed ? snap.latestClosed.remaining : 0);
-  document.getElementById('pbTotalOutstanding').textContent = fmt(snap.totalOutstanding);
+  document.getElementById('pbMinDue').textContent = fmtMoney(snap.latestClosed ? snap.latestClosed.minDue : 0);
+  document.getElementById('pbStatementAmt').textContent = fmtMoney(snap.latestClosed ? snap.latestClosed.remaining : 0);
+  document.getElementById('pbTotalOutstanding').textContent = fmtMoney(snap.totalOutstanding);
   document.getElementById('pbAmount').value = '';
   openModal('payBillModal');
 }
@@ -3220,12 +3812,14 @@ function fillPayBillAmount(kind) {
   if (kind === 'min') v = snap.latestClosed ? snap.latestClosed.minDue : 0;
   if (kind === 'statement') v = snap.latestClosed ? snap.latestClosed.remaining : 0;
   if (kind === 'total') v = snap.totalOutstanding;
-  document.getElementById('pbAmount').value = v ? Math.round(v) : 0;
+  // ===== PATCH 5: snap values are storage units (derived from paise-scale transactions post
+  // migration); the pbAmount field is a rupee-facing input, so convert on the way in. =====
+  document.getElementById('pbAmount').value = v ? Math.round(fromMinor(v)) : 0;
 }
 
 function submitPayBill() {
   const cardId = document.getElementById('pbCardId').value;
-  const amount = parseFloat(document.getElementById('pbAmount').value);
+  const amount = toMinor(parseFloat(document.getElementById('pbAmount').value)); // ===== PATCH 5
   if (!amount || amount <= 0) { showToast('❌ Enter a valid amount', 'red'); return; }
   const card = getCardById(cardId); if (!card) return;
   const tx = {
@@ -3241,7 +3835,7 @@ function submitPayBill() {
   saveDB();
   closeModal('payBillModal');
   syncStatementCycles();
-  showToast(`✅ Payment of ${fmt(amount)} recorded`, 'green');
+  showToast(`✅ Payment of ${fmtMoney(amount)} recorded`, 'green');
   renderCards();
 }
 
@@ -3261,7 +3855,7 @@ function openUnbilledTx(cardId) {
         <div style="font-weight:600;">${t.merchant}</div>
         <div style="font-size:11px;color:var(--text3);">${t.date} · ${(t.category||'').split(' > ').pop()}</div>
       </div>
-      <div style="font-weight:700;color:${t.type==='refund'?'var(--green)':'var(--red)'};">${t.type==='refund'?'+':'-'}${fmt(t.amount)}</div>
+      <div style="font-weight:700;color:${t.type==='refund'?'var(--green)':'var(--red)'};">${t.type==='refund'?'+':'-'}${fmtMoney(t.amount)}</div>
     </div>`).join('') : '<div style="padding:16px;text-align:center;color:var(--text3);">No unbilled transactions this cycle.</div>';
   openModal('unbilledModal');
 }
@@ -3275,10 +3869,10 @@ function openStatementHistory(cardId) {
   document.getElementById('histBody').innerHTML = cycles.length ? cycles.map(c => `
     <tr style="border-top:1px solid var(--border);">
       <td style="padding:8px 6px;">${c.periodStart} → ${c.periodEnd}</td>
-      <td style="padding:8px 6px;">${fmt(c.statementAmount)}</td>
-      <td style="padding:8px 6px;color:var(--green);">${fmt(c.paid)}</td>
-      <td style="padding:8px 6px;color:var(--red);">${fmt(c.remaining)}</td>
-      <td style="padding:8px 6px;color:var(--red);">${c.interestAccrued?fmt(c.interestAccrued):'—'}</td>
+      <td style="padding:8px 6px;">${fmtMoney(c.statementAmount)}</td>
+      <td style="padding:8px 6px;color:var(--green);">${fmtMoney(c.paid)}</td>
+      <td style="padding:8px 6px;color:var(--red);">${fmtMoney(c.remaining)}</td>
+      <td style="padding:8px 6px;color:var(--red);">${c.interestAccrued?fmtMoney(c.interestAccrued):'—'}</td>
       <td style="padding:8px 6px;">${c.dueDate}</td>
       <td style="padding:8px 6px;"><span style="color:${badgeColor(c.status)};font-weight:600;text-transform:capitalize;">${c.status}</span></td>
     </tr>`).join('') : '<tr><td colspan="7" style="padding:16px;text-align:center;color:var(--text3);">No closed statements yet.</td></tr>';
@@ -3290,7 +3884,7 @@ function openCardModal(card) {
     document.getElementById('cBank').value = card.bank;
     document.getElementById('cName').value = card.name;
     document.getElementById('cLast4').value = card.last4 || '';
-    document.getElementById('cLimit').value = card.limit;
+    document.getElementById('cLimit').value = fromMinor(card.limit); // ===== PATCH 5: display in rupees
     document.getElementById('cBillDate').value = card.billDate;
     document.getElementById('cDueDate').value = card.dueDate;
     document.getElementById('cPoints').value = card.points || 0;
@@ -3302,7 +3896,7 @@ function openCardModal(card) {
     document.getElementById('cApr').value = card.interestRatePctApr !== undefined ? card.interestRatePctApr : 42;
     document.getElementById('cWeekendRollover').value = card.weekendRollover || 'none';
     document.getElementById('cAutoPay').value = card.autoPay || 'none';
-    document.getElementById('cAutoPayAmount').value = card.autoPayAmount || '';
+    document.getElementById('cAutoPayAmount').value = card.autoPayAmount ? fromMinor(card.autoPayAmount) : ''; // ===== PATCH 5
     document.getElementById('cAutoPayAmountGroup').style.display = (card.autoPay === 'fixed') ? 'block' : 'none';
     openModal('cardModal');
     document.getElementById('cardModal').dataset.editId = card.id;
@@ -3328,7 +3922,9 @@ function saveCard() {
     id: editId || uid(),
     bank, name,
     last4: document.getElementById('cLast4').value.trim(),
-    limit: parseFloat(document.getElementById('cLimit').value)||0,
+    // ===== PATCH 5: inputs are typed in rupees (what the form shows) — route through
+    // toMinor() so storage always ends up in the same unit as everything else in `db`. =====
+    limit: toMinor(parseFloat(document.getElementById('cLimit').value)||0),
     billDate: parseInt(document.getElementById('cBillDate').value)||17,
     dueDate: parseInt(document.getElementById('cDueDate').value)||7,
     points: parseInt(document.getElementById('cPoints').value)||0,
@@ -3340,8 +3936,8 @@ function saveCard() {
     interestRatePctApr: parseFloat(document.getElementById('cApr').value)||42,
     weekendRollover: document.getElementById('cWeekendRollover').value || 'none',
     autoPay: document.getElementById('cAutoPay').value || 'none',
-    autoPayAmount: parseFloat(document.getElementById('cAutoPayAmount').value)||0,
-    outstanding: 0
+    autoPayAmount: toMinor(parseFloat(document.getElementById('cAutoPayAmount').value)||0)
+    // ===== PATCH 5 DELETE: `outstanding: 0` removed — dead field, never read anywhere =====
   };
   if (editId) { const i=db.cards.findIndex(c=>c.id===editId); if(i>=0) db.cards[i]=card; }
   else db.cards.push(card);
@@ -3372,9 +3968,9 @@ function renderEmis() {
   const done = db.emis.filter(e=>!e.active || e.remaining<=0);
   const totalEmi = active.reduce((s,e)=>s+e.amount,0);
   const totalRem = active.reduce((s,e)=>s+e.amount*e.remaining,0);
-  document.getElementById('totalEmiAmt').textContent = fmt(totalEmi);
+  document.getElementById('totalEmiAmt').textContent = fmtMoney(totalEmi);
   document.getElementById('totalEmiSub').textContent = `${active.length} active EMI${active.length!==1?'s':''}`;
-  document.getElementById('totalEmiRemaining').textContent = fmt(totalRem);
+  document.getElementById('totalEmiRemaining').textContent = fmtMoney(totalRem);
 
   document.getElementById('emiList').innerHTML = active.length ? active.map(e => emiCard(e)).join('') : '<div class="empty-state"><p>No active EMIs</p></div>';
   document.getElementById('emiCompleted').innerHTML = done.length ? done.map(e => emiCard(e,true)).join('') : '<div class="empty-state"><p>No completed EMIs</p></div>';
@@ -3407,15 +4003,15 @@ function emiCard(e, done=false) {
     <div class="emi-icon">${done?'✅':'📦'}</div>
     <div class="emi-info">
       <div class="emi-name">${e.name} ${done?'<span class="badge badge-green">Completed</span>':emiStatusBadge}</div>
-      <div class="emi-meta">${cardLabel} · ${e.remaining}/${e.tenure} months left · ${fmt(e.amount*e.remaining)} locked</div>
+      <div class="emi-meta">${cardLabel} · ${e.remaining}/${e.tenure} months left · ${fmtMoney(e.amount*e.remaining)} locked</div>
       <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">
         <div class="progress-bar" style="flex:1;"><div class="progress-fill" style="width:${pct}%;background:${done?'var(--green)':'var(--orange)'};"></div></div>
         <span style="font-size:11px;color:var(--text3);">${paid}/${e.tenure}</span>
       </div>
     </div>
     <div class="emi-right">
-      <div class="emi-amount">${fmt(e.amount)}/mo</div>
-      <div class="emi-remaining">${done?'Completed':fmt(e.amount*e.remaining)+' left'}</div>
+      <div class="emi-amount">${fmtMoney(e.amount)}/mo</div>
+      <div class="emi-remaining">${done?'Completed':fmtMoney(e.amount*e.remaining)+' left'}</div>
       ${!done?`<div style="display:flex;gap:4px;margin-top:8px;flex-wrap:wrap;">
         ${thisMonthPaid
           ? `<button class="btn btn-ghost btn-sm" style="opacity:0.5;cursor:default;" disabled>✓ ${curMonthName3} Paid</button>`
@@ -3434,7 +4030,7 @@ function openEditEmiModal(id) {
   if (!e) return;
   editingEmiId = id;
   document.getElementById('eName').value = e.name;
-  document.getElementById('eAmount').value = e.amount;
+  document.getElementById('eAmount').value = fromMinor(e.amount); // ===== PATCH 5
   document.getElementById('eTenure').value = e.tenure;
   document.getElementById('eRemaining').value = e.remaining;
   document.getElementById('eStart').value = e.startDate || today();
@@ -3455,7 +4051,7 @@ function openEmiModal() {
 
 function saveEmi() {
   const name = document.getElementById('eName').value.trim();
-  const amount = parseFloat(document.getElementById('eAmount').value);
+  const amount = toMinor(parseFloat(document.getElementById('eAmount').value)); // ===== PATCH 5
   if (!name || !amount) { showToast('❌ Name and amount required', 'red'); return; }
   const tenure = Math.max(1, Math.min(360, parseInt(document.getElementById('eTenure').value)||6));
   const remaining = Math.max(0, Math.min(tenure, parseInt(document.getElementById('eRemaining').value)||tenure));
@@ -3512,7 +4108,7 @@ function emiPay(id) {
   const nowD2 = new Date();
   const nextMonthName2 = MONTH_NAMES2[(nowD2.getMonth()+1)%12];
   saveDB(); renderEmis(); renderDashboard();
-  showToast(`✅ ${MONTH_NAMES2[nowD2.getMonth()]} EMI paid: ${fmt(e.amount)} · Next: ${nextMonthName2}`, 'green');
+  showToast(`✅ ${MONTH_NAMES2[nowD2.getMonth()]} EMI paid: ${fmtMoney(e.amount)} · Next: ${nextMonthName2}`, 'green');
 }
 
 function deleteEmi(id) {
@@ -3537,19 +4133,19 @@ function renderCashback() {
   document.getElementById('cashbackStats').innerHTML = `
     <div class="stat-card" style="--accent-color:linear-gradient(90deg,var(--green),var(--cyan));">
       <div class="label">Total Cashback Earned</div>
-      <div class="value text-green">${fmt(totalCb)}</div>
+      <div class="value text-green">${fmtMoney(totalCb)}</div>
       <div class="sub">All time</div>
       <div class="icon-bg" style="--icon-bg:rgba(34,197,94,0.12);">💰</div>
     </div>
     <div class="stat-card">
       <div class="label">This Month</div>
-      <div class="value text-green">${fmt(curCb)}</div>
+      <div class="value text-green">${fmtMoney(curCb)}</div>
       <div class="sub">${monthLabel(nowMonth())}</div>
       <div class="icon-bg">📅</div>
     </div>
     <div class="stat-card">
       <div class="label">Avg per Transaction</div>
-      <div class="value">${fmt(txsWithCb.length ? totalCb/txsWithCb.length : 0)}</div>
+      <div class="value">${fmtMoney(txsWithCb.length ? totalCb/txsWithCb.length : 0)}</div>
       <div class="sub">${txsWithCb.length} transactions with cashback</div>
       <div class="icon-bg">📊</div>
     </div>
@@ -3568,7 +4164,7 @@ function renderCashback() {
     const card = getCardById(id);
     return `<div class="flex justify-between items-center" style="padding:10px 0;border-bottom:1px solid var(--border);">
       <span style="font-size:13px;">${card?`${card.bank} ${card.name}`:id}</span>
-      <span class="text-green" style="font-weight:700;">${fmt(cb)}</span>
+      <span class="text-green" style="font-weight:700;">${fmtMoney(cb)}</span>
     </div>`;
   }).join('') || '<div class="empty-state"><p>No cashback data</p></div>';
 
@@ -3578,7 +4174,7 @@ function renderCashback() {
   document.getElementById('cashbackByMerchant').innerHTML = Object.entries(cbMerch).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([m,cb])=>
     `<div class="flex justify-between items-center" style="padding:10px 0;border-bottom:1px solid var(--border);">
       <span style="font-size:13px;">${getCatEmoji('')} ${m}</span>
-      <span class="text-green" style="font-weight:700;">${fmt(cb)}</span>
+      <span class="text-green" style="font-weight:700;">${fmtMoney(cb)}</span>
     </div>`
   ).join('') || '<div class="empty-state"><p>No data</p></div>';
 
@@ -3604,8 +4200,8 @@ function renderCashback() {
           </div>
         </div>
         <div style="text-align:right;flex-shrink:0;">
-          <div style="font-size:13px;font-weight:700;color:var(--red);">-${fmt(t.amount)}</div>
-          <div style="font-size:11px;font-weight:700;color:var(--green);">+${fmt(cb)}</div>
+          <div style="font-size:13px;font-weight:700;color:var(--red);">-${fmtMoney(t.amount)}</div>
+          <div style="font-size:11px;font-weight:700;color:var(--green);">+${fmtMoney(cb)}</div>
         </div>
       </div>`;
     }).join('')
@@ -3614,59 +4210,179 @@ function renderCashback() {
 }
 
 // ============================================================
-// BUDGETS
+// BUDGETS — ===== PATCH 1 START: Single Monthly Budget Engine =====
+// Replaces the old per-category budget list with one pooled monthly
+// budget. Every 'expense' transaction deducts from it; 'refund' adds
+// back; 'payment' (card bill payments — see submitPayBill/checkCardAutoPay,
+// tagged 'card-bill-payment') is ALWAYS excluded since that money was
+// already deducted at the moment it was spent, and re-deducting it at
+// payment time would double-count it. 'emi-payment' rows are deducted
+// only if the user opts in via db.budget.includeEmi, since some users
+// budget EMIs separately as fixed monthly obligations.
+//
+// Rollback: db.budgets (old per-category array) is never deleted from
+// storage — only unused by this UI now. To roll back, restore the
+// previous renderBudgets()/openBudgetModal()/saveBudget()/deleteBudget()
+// and the previous #page-budgets / #budgetModal markup.
 // ============================================================
+
+// Resolves the current budget cycle's [start, end] Date range.
+function resolveBudgetCycle(b, now) {
+  const y = now.getFullYear(), m = now.getMonth();
+  if (b.cycleType === 'custom' && b.cycleStartDay > 1) {
+    const day = Math.min(b.cycleStartDay, 28);
+    let start = new Date(y, m, day);
+    if (now.getDate() < day) start = new Date(y, m - 1, day); // still inside previous cycle
+    const end = new Date(start.getFullYear(), start.getMonth() + 1, day - 1, 23, 59, 59, 999);
+    return { start, end };
+  }
+  // Default: calendar month
+  const start = new Date(y, m, 1);
+  const end = new Date(y, m + 1, 0, 23, 59, 59, 999);
+  return { start, end };
+}
+
+function inCycle(tx, start, end) {
+  if (!tx.date) return false;
+  const d = new Date(tx.date + 'T12:00:00'); // avoid TZ edge cases at midnight
+  return d >= start && d <= end;
+}
+
+function getBudgetStatus(now = new Date()) {
+  const b = db.budget;
+  if (!b || !b.monthlyLimit) return null;
+
+  const { start, end } = resolveBudgetCycle(b, now);
+  const cycleTxs = db.transactions.filter(t => inCycle(t, start, end));
+
+  const spent = cycleTxs
+    .filter(t => t.type === 'expense' || (t.type === 'emi-payment' && b.includeEmi))
+    .reduce((s, t) => s + (t.amount || 0), 0);
+
+  const refunded = cycleTxs
+    .filter(t => t.type === 'refund')
+    .reduce((s, t) => s + (t.amount || 0), 0);
+
+  const netSpent = Math.max(0, spent - refunded);
+  const remaining = b.monthlyLimit - netSpent;
+  const pct = b.monthlyLimit ? (netSpent / b.monthlyLimit) * 100 : 0;
+
+  const today = new Date();
+  const daysLeft = Math.max(1, Math.ceil((end - today) / 86400000));
+  const daysPassed = Math.max(1, Math.ceil((today - start) / 86400000));
+
+  // Category breakdown (informational only — deduction is pooled, not per-category)
+  const byCat = {};
+  cycleTxs.filter(t => t.type === 'expense' || (t.type === 'emi-payment' && b.includeEmi)).forEach(t => {
+    const key = t.category || 'Uncategorized';
+    byCat[key] = (byCat[key] || 0) + (t.amount || 0);
+  });
+
+  return {
+    limit: b.monthlyLimit, spent: netSpent, remaining, pct,
+    status: pct >= 100 ? 'over' : pct >= 80 ? 'warn' : 'ok',
+    cycleStart: start, cycleEnd: end, daysLeft, daysPassed,
+    dailyAvg: netSpent / daysPassed,
+    safeDaily: Math.max(0, remaining / daysLeft),
+    breakdown: Object.entries(byCat).sort((a, b2) => b2[1] - a[1]).slice(0, 5)
+  };
+}
+
 function renderBudgets() {
-  const cur = nowMonth();
-  const txs = db.transactions.filter(t=>getTxMonth(t)===cur && t.type==='expense');
-  document.getElementById('budgetList').innerHTML = db.budgets.length ? db.budgets.map(b => {
-    const spent = txs.filter(t => b.category.includes(' > ') ? t.category===b.category : t.category?.startsWith(b.category)).reduce((s,t)=>s+t.amount,0);
-    const pct = b.limit ? Math.min(100,spent/b.limit*100) : 0;
-    const color = pct>90?'var(--red)':pct>70?'var(--orange)':'var(--green)';
-    return `<div class="panel" style="margin-bottom:12px;">
+  const s = getBudgetStatus();
+  const el = document.getElementById('budgetList');
+
+  if (!s) {
+    el.innerHTML = `<div class="empty-state"><div class="icon">🎯</div><p>No budget set yet.</p>
+      <button class="btn btn-primary" style="margin-top:12px;" onclick="openBudgetModal()">⚙️ Set Monthly Budget</button>
+    </div>`;
+    return;
+  }
+
+  const color = s.status === 'over' ? 'var(--red)' : s.status === 'warn' ? 'var(--orange)' : 'var(--green)';
+  const fillPct = Math.min(100, s.pct);
+  const cycleLabel = db.budget.cycleType === 'custom'
+    ? `Cycle: ${db.budget.cycleStartDay}th → ${db.budget.cycleStartDay - 1 <= 0 ? 28 : db.budget.cycleStartDay - 1}th`
+    : `Calendar month`;
+
+  el.innerHTML = `
+    <div class="panel">
       <div class="panel-body">
-        <div class="flex justify-between items-center mb-2">
-          <span style="font-weight:600;">${getCatEmoji(b.category)} ${b.category.split(' > ').pop()}</span>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <span style="font-size:12px;color:${color};font-weight:700;">${fmtPct(pct)}</span>
-            <button class="btn btn-danger btn-sm" onclick="deleteBudget('${b.id}')">✕</button>
+        <div style="text-align:center;padding:12px 0 20px;">
+          <div style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.1em;">Budget Remaining</div>
+          <div style="font-family:var(--font-head);font-size:38px;font-weight:800;font-variant-numeric:tabular-nums;margin:8px 0;color:${s.remaining < 0 ? 'var(--red)' : 'var(--text)'};">
+            ${fmtMoney(s.remaining)}
+          </div>
+          <div class="text-muted" style="font-size:12px;">
+            of ${fmtMoney(s.limit)} · ${s.daysLeft} day${s.daysLeft === 1 ? '' : 's'} left · ${cycleLabel}
           </div>
         </div>
-        <div class="progress-bar" style="height:8px;margin-bottom:8px;"><div class="progress-fill" style="width:${pct}%;background:${color};"></div></div>
-        <div class="flex justify-between" style="font-size:12px;color:var(--text2);">
-          <span>Spent: <strong style="color:var(--text);">${fmt(spent)}</strong></span>
-          <span>Budget: <strong style="color:var(--text);">${fmt(b.limit)}</strong></span>
-          <span>Left: <strong style="color:${color};">${fmt(Math.max(0,b.limit-spent))}</strong></span>
+
+        <div class="progress-bar" style="height:10px;margin-bottom:8px;">
+          <div class="progress-fill" style="width:${fillPct}%;background:${color};"></div>
         </div>
-        ${pct>90?`<div style="margin-top:8px;padding:6px 10px;background:rgba(239,68,68,0.1);border-radius:8px;font-size:11px;color:var(--red);">⚠️ Budget almost exhausted!</div>`:''}
+        ${s.status === 'over' ? `<div style="margin-top:4px;padding:6px 10px;background:rgba(239,68,68,0.1);border-radius:8px;font-size:11px;color:var(--red);">⚠️ Budget exhausted for this cycle</div>`
+          : s.status === 'warn' ? `<div style="margin-top:4px;padding:6px 10px;background:rgba(249,115,22,0.1);border-radius:8px;font-size:11px;color:var(--orange);">⚠️ ${fmtPct(s.pct)} of budget used</div>` : ''}
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:20px;text-align:center;">
+          <div>
+            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;">Spent</div>
+            <div class="text-red" style="font-family:var(--font-head);font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;">${fmtMoney(s.spent)}</div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;">Daily Avg</div>
+            <div style="font-family:var(--font-head);font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;">${fmtMoney(s.dailyAvg)}</div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;">Safe/Day</div>
+            <div class="text-green" style="font-family:var(--font-head);font-size:16px;font-weight:700;font-variant-numeric:tabular-nums;">${fmtMoney(s.safeDaily)}</div>
+          </div>
+        </div>
+
+        ${s.breakdown.length ? `
+          <hr class="divider">
+          <div class="section-title" style="font-size:13px;">Where the money went</div>
+          ${s.breakdown.map(([cat, amt]) => `
+            <div class="flex justify-between" style="font-size:12px;padding:5px 0;color:var(--text2);">
+              <span>${getCatEmoji(cat)} ${cat.split(' > ').pop()}</span>
+              <strong style="color:var(--text);font-variant-numeric:tabular-nums;">${fmtMoney(amt)}</strong>
+            </div>
+          `).join('')}
+        ` : ''}
+
+        <div class="text-muted" style="font-size:11px;margin-top:14px;">
+          ℹ️ Card bill payments are excluded (already counted when spent)${db.budget.includeEmi ? '. EMI payments are included.' : '. EMI payments are excluded — enable in Configure to include them.'}
+        </div>
       </div>
     </div>`;
-  }).join('') : '<div class="empty-state"><div class="icon">🎯</div><p>No budgets set. Add one to track spending.</p></div>';
 }
 
 function openBudgetModal() {
-  const catSel = document.getElementById('bCategory');
-  catSel.innerHTML = ALL_CATEGORIES.map(c=>`<option value="${c}">${c}</option>`).join('');
-  document.getElementById('bAmount').value = '';
+  const b = db.budget || {};
+  document.getElementById('bAmount').value = b.monthlyLimit ? fromMinor(b.monthlyLimit) : ''; // ===== PATCH 5
+  document.getElementById('bCycleType').value = b.cycleType || 'calendar';
+  document.getElementById('bCycleDay').value = b.cycleStartDay > 1 ? b.cycleStartDay : '';
+  document.getElementById('bCycleDayWrap').style.display = (b.cycleType === 'custom') ? 'flex' : 'none';
+  document.getElementById('bIncludeEmi').checked = !!b.includeEmi;
   openModal('budgetModal');
 }
 
 function saveBudget() {
-  const cat = document.getElementById('bCategory').value;
-  const limit = parseFloat(document.getElementById('bAmount').value);
-  if (!limit) { showToast('❌ Enter budget amount', 'red'); return; }
-  const existing = db.budgets.findIndex(b=>b.category===cat);
-  if (existing>=0) db.budgets[existing].limit = limit;
-  else db.budgets.push({ id:uid(), category:cat, limit });
-  saveDB(); closeModal('budgetModal');
+  const limitRupees = parseFloat(document.getElementById('bAmount').value);
+  if (!limitRupees || limitRupees <= 0) { showToast('❌ Enter a valid budget amount', 'red'); return; }
+  const limit = toMinor(limitRupees); // ===== PATCH 5: store in the same unit as everything else
+  const cycleType = document.getElementById('bCycleType').value === 'custom' ? 'custom' : 'calendar';
+  let cycleStartDay = parseInt(document.getElementById('bCycleDay').value, 10);
+  if (cycleType !== 'custom' || !cycleStartDay || cycleStartDay < 1 || cycleStartDay > 28) cycleStartDay = 1;
+  const includeEmi = document.getElementById('bIncludeEmi').checked;
+
+  db.budget = { monthlyLimit: limit, cycleType, cycleStartDay, includeEmi };
+  saveDB();
+  closeModal('budgetModal');
   showToast('✅ Budget saved', 'green');
   renderBudgets();
 }
-
-function deleteBudget(id) {
-  db.budgets = db.budgets.filter(b=>b.id!==id);
-  saveDB(); renderBudgets();
-}
+// ===== PATCH 1 END =====
 
 // ============================================================
 // SETTINGS
@@ -3717,6 +4433,10 @@ function updateCardCashback(id, type, val) {
 // EXPORT / IMPORT
 // ============================================================
 function exportJSON() {
+  // ===== PATCH 4: stamp schema/currency metadata onto every export. db.metadata is already part
+  // of `db` (and therefore already included in the JSON.stringify below) — this just guards
+  // against exporting before ensureSchemaDefaults() has ever run (e.g. a very first load race). =====
+  if (!db.metadata) db.metadata = { schemaVersion: CURRENT_SCHEMA_VERSION, currencyUnit: 'rupees' };
   const blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -3727,9 +4447,12 @@ function exportJSON() {
 
 function exportCSV() {
   const headers = ['Date','Merchant','Amount','Category','Card','Type','CashbackPct','CashbackAmt','NetSpend','Notes','Tags'];
+  // ===== PATCH 5: CSV must stay human-readable in rupees regardless of internal storage
+  // unit — wrap every money column in fromMinor(). effectiveCashback()/roundMoney() operate
+  // in storage units (paise post-migration), so convert their result too, not just t.amount. =====
   const rows = db.transactions.map(t => [
-    t.date, t.merchant, t.amount, t.category, getCardLabel(t.card), t.type,
-    t.cashbackPct, effectiveCashback(t).toFixed(2), t.netSpend, t.notes, (t.tags||[]).join(';')
+    t.date, t.merchant, fromMinor(t.amount), t.category, getCardLabel(t.card), t.type,
+    t.cashbackPct, fromMinor(roundMoney(effectiveCashback(t))), fromMinor(t.netSpend), t.notes, (t.tags||[]).join(';')
   ]);
   const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob = new Blob([csv], { type: 'text/csv' });
@@ -3748,33 +4471,64 @@ function handleImport(e) {
   const reader = new FileReader();
   reader.onload = ev => {
     try {
-      const data = JSON.parse(ev.target.result);
+      let data = JSON.parse(ev.target.result);
       if (!Array.isArray(data.transactions)) throw new Error('Invalid format');
       const currentCount = db.transactions.length;
       const importCount = data.transactions.length;
       if (!confirm(`Import backup?\n\nCurrent: ${currentCount} transactions\nBackup: ${importCount} transactions\n\nClick OK to REPLACE all data.`)) return;
+
+      // ===== PATCH 5: the previous comment here claimed ensureSchemaDefaults() would run
+      // migrateSchemaV2toV3() — it never did; ensureSchemaDefaults() only fills structural
+      // defaults, it has no migration logic. This was the actual gap: an old rupees backup
+      // (schemaVersion < 3, or no metadata at all — pre-PATCH-4) imported after this device
+      // had already migrated to paise would land here completely unconverted, silently
+      // corrupting every money field by 100x. Explicitly migrate BEFORE it becomes `db`:
+      //   A) no metadata at all (pre-PATCH-4 backup)      -> treated as rupees, schemaVersion 1
+      //   B) metadata.schemaVersion < 3 / currencyUnit='rupees' -> converted to paise
+      //   C) metadata.schemaVersion === 3 / currencyUnit='paise' -> passed through unchanged
+      if (!data.metadata) data.metadata = { schemaVersion: 1, currencyUnit: 'rupees' };
+      if ((data.metadata.schemaVersion || 1) < 3 && data.metadata.currencyUnit !== 'paise') {
+        const beforeUnit = data.metadata.currencyUnit || 'rupees';
+        data = migrateSchemaV2toV3(data);
+        if (data.metadata.currencyUnit === 'paise') {
+          showToast(`🔄 Backup auto-converted from ${beforeUnit} to paise`, 'green');
+        } else {
+          // migrateSchemaV2toV3 already toasted the failure reason; abort the import entirely
+          // rather than loading a half-upgraded backup as if it were current-format data.
+          showToast('❌ Backup currency migration failed — import cancelled, no data changed', 'red');
+          return;
+        }
+      }
+      data.metadata.schemaVersion = CURRENT_SCHEMA_VERSION;
+
       db = {
         transactions: data.transactions || [],
         cards: data.cards || JSON.parse(JSON.stringify(DEFAULT_CARDS)),
         emis: data.emis || [],
         budgets: data.budgets || [],
+        budget: data.budget || { monthlyLimit: 0, cycleType: 'calendar', cycleStartDay: 1, includeEmi: false }, // ===== PATCH 1: restore single monthly budget, or default if importing an older backup =====
         fixedSpends: data.fixedSpends || [],
         cashbackRules: data.cashbackRules || [],
+        statementCycles: [], // ===== PATCH 5: always rebuilt fresh below via syncStatementCycles() — never trust an imported cache, migrated or not
+        metadata: data.metadata,
       };
+      ensureSchemaDefaults(); // ===== PATCH 2 (hardening): same reconstruction loadDB() applies — fills card defaults (minDuePct/APR/etc.), normalizes budget, guarantees statementCycles/fixedSpends/cashbackRules exist, even for old/partial backups
+      syncStatementCycles(); // ===== PATCH 5: rebuild cycles now, in the correct (post-migration) unit, before any render
       saveDB();
       showToast(`✅ Imported ${importCount} transactions`, 'green');
       renderPage(currentPage);
-    } catch(err) { showToast('❌ Invalid or corrupt backup file', 'red'); }
+    } catch(err) { console.error('Import failed:', err); showToast('❌ Invalid or corrupt backup file', 'red'); }
   };
   reader.readAsText(file);
   e.target.value = '';
 }
 
-function resetAllData() {
+async function resetAllData() {
   if (!confirm('⚠️ This will delete ALL data. Are you sure?')) return;
-  localStorage.removeItem(STORAGE_KEY);
+  // ===== PATCH 2: was localStorage.removeItem(STORAGE_KEY) only; loadDB() call is now awaited =====
+  await finosStorage.clearAll(); // clears both IndexedDB record and localStorage fallback key
   db = { transactions:[], cards:[], emis:[], budgets:[], cashbackRules:[] };
-  loadDB();
+  await loadDB();
   if (!db.transactions || db.transactions.length === 0) {
     loadRichDemoData();
   }
@@ -3811,7 +4565,7 @@ function openFixedSpendModal(prefill) {
     db.cards.map(c => `<option value="${c.id}">${c.bank} ${c.name}</option>`).join('');
   if (prefill) {
     document.getElementById('fsName').value = prefill.name;
-    document.getElementById('fsAmount').value = prefill.amount;
+    document.getElementById('fsAmount').value = fromMinor(prefill.amount); // ===== PATCH 5
     document.getElementById('fsCategory').value = prefill.category;
     document.getElementById('fsDueDay').value = prefill.dueDay || '';
     document.getElementById('fsCard').value = prefill.card || '';
@@ -3828,7 +4582,7 @@ function openFixedSpendModal(prefill) {
 
 function saveFixedSpend() {
   const name = document.getElementById('fsName').value.trim();
-  const amount = parseFloat(document.getElementById('fsAmount').value);
+  const amount = toMinor(parseFloat(document.getElementById('fsAmount').value)); // ===== PATCH 5
   if (!name || !amount) { showToast('❌ Name and Amount required', 'red'); return; }
   const fs = {
     id: editingFsId || uid(),
@@ -3864,7 +4618,7 @@ function renderFixedSpends() {
   if (!db.fixedSpends) db.fixedSpends = [];
   const list = db.fixedSpends;
   const total = list.reduce((s, f) => s + f.amount, 0);
-  document.getElementById('fixedSpendsTotal').textContent = fmt(total);
+  document.getElementById('fixedSpendsTotal').textContent = fmtMoney(total);
 
   if (!list.length) {
     document.getElementById('fixedSpendsList').innerHTML = `
@@ -3894,7 +4648,7 @@ function renderFixedSpends() {
             </div>
           </div>
           <div style="text-align:right;flex-shrink:0;">
-            <div style="font-family:var(--font-head);font-size:16px;font-weight:700;color:var(--orange);">${fmt(f.amount)}</div>
+            <div style="font-family:var(--font-head);font-size:16px;font-weight:700;color:var(--orange);">${fmtMoney(f.amount)}</div>
             <div style="font-size:10px;color:var(--text3);">/ month</div>
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0;">
@@ -3917,28 +4671,32 @@ function removeSplash() {
   setTimeout(() => { try { splash.remove(); } catch(e) {} }, 350);
 }
 
-try {
-  loadDB();
-  if (!db.transactions || db.transactions.length === 0) {
-    loadRichDemoData();
+// ===== PATCH 2: init wrapped in an async IIFE so loadDB() (now async) is awaited before
+// any rendering happens. Everything inside is otherwise identical to the original init. =====
+(async function initApp() {
+  try {
+    await loadDB();
+    if (!db.transactions || db.transactions.length === 0) {
+      loadRichDemoData();
+    }
+    checkEmiAutoPay();
+    checkCardAutoPay();
+    renderDashboard();
+    (function updateTopbarDate() {
+      const now = new Date();
+      const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const str = days[now.getDay()] + ', ' + now.getDate() + ' ' + months[now.getMonth()] + ' ' + now.getFullYear();
+      const el = document.getElementById('topbarDate');
+      if (el) el.textContent = str;
+    })();
+  } catch(e) {
+    console.error('FinOS init error:', e);
+  } finally {
+    // Always remove splash — even if init threw an error
+    removeSplash();
   }
-  checkEmiAutoPay();
-  checkCardAutoPay();
-  renderDashboard();
-  (function updateTopbarDate() {
-    const now = new Date();
-    const days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const str = days[now.getDay()] + ', ' + now.getDate() + ' ' + months[now.getMonth()] + ' ' + now.getFullYear();
-    const el = document.getElementById('topbarDate');
-    if (el) el.textContent = str;
-  })();
-} catch(e) {
-  console.error('FinOS init error:', e);
-} finally {
-  // Always remove splash — even if init threw an error
-  removeSplash();
-}
+})();
 
 // NAV EVENT DELEGATION - single source of truth
 document.getElementById('mainNav').addEventListener('click', function(e) {
@@ -3961,9 +4719,92 @@ document.querySelectorAll('.modal-overlay').forEach(overlay => {
 });
 
 // ============================================================
-// PWA — Service Worker Registration
+// PWA — Service Worker Registration (PATCH 3: Offline PWA support)
 // ============================================================
-// PWA Service Worker — disabled (requires sw.js file)
+// ===== PATCH 3 START =====
+// Additive only — does not touch Budget/Storage/Card/Statement/Refund/EMI
+// engines or any core app UI. This block plus service-worker.js are the
+// entire patch.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    // Relative path is required for GitHub Pages project sites
+    // (https://user.github.io/repo/) — an absolute '/service-worker.js'
+    // would register with scope '/', which 404s under a repo subpath.
+    navigator.serviceWorker.register('./service-worker.js').then((reg) => {
+      // Case 1: a new version already finished installing before this
+      // page loaded (e.g. it was staged during a previous visit's install
+      // but never accepted) — surface it immediately.
+      if (reg.waiting && navigator.serviceWorker.controller) {
+        showSWUpdateBanner(reg.waiting);
+      }
+
+      // Case 2: a new version starts installing during this session.
+      reg.addEventListener('updatefound', () => {
+        const newWorker = reg.installing;
+        if (!newWorker) return;
+        newWorker.addEventListener('statechange', () => {
+          if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            // Installed AND there's already a controller = this is an
+            // update to an existing install, not the first-ever install.
+            showSWUpdateBanner(newWorker);
+          }
+        });
+      });
+
+      // Cover long-lived open tabs: periodically ask the browser to check
+      // for a new service-worker.js in the background.
+      setInterval(() => { reg.update().catch(() => {}); }, 60 * 60 * 1000); // hourly
+    }).catch((err) => console.error('[SW] registration failed:', err));
+
+    // When the new worker takes control (after the user accepts the
+    // update below), reload once so the page runs the new code.
+    let swRefreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (swRefreshing) return;
+      swRefreshing = true;
+      window.location.reload();
+    });
+  });
+}
+
+function showSWUpdateBanner(worker) {
+  if (document.getElementById('swUpdateBanner')) return;
+  const banner = document.createElement('div');
+  banner.id = 'swUpdateBanner';
+  banner.style.cssText = `
+    position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
+    background:linear-gradient(135deg,#4f8ef7,#6c63ff);
+    color:#fff;padding:12px 20px;border-radius:14px;
+    display:flex;align-items:center;gap:12px;
+    box-shadow:0 8px 32px rgba(79,142,247,0.4);
+    z-index:9999;font-family:Inter,sans-serif;font-size:13px;
+    animation:slideUp 0.3s ease;max-width:320px;
+  `;
+  banner.innerHTML = `
+    <span style="font-size:22px;">⬆️</span>
+    <div>
+      <div style="font-weight:700;margin-bottom:2px;">Update Available</div>
+      <div style="opacity:0.85;font-size:11px;">Naya version ready hai — refresh karo</div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-left:auto;">
+      <button id="swUpdateBtn" style="background:#fff;color:#4f8ef7;border:none;
+        padding:6px 14px;border-radius:8px;font-weight:700;font-size:12px;cursor:pointer;">
+        Refresh
+      </button>
+      <button id="swUpdateLaterBtn" style="background:rgba(255,255,255,0.2);
+        color:#fff;border:none;padding:4px 14px;border-radius:8px;font-size:11px;cursor:pointer;">
+        Later
+      </button>
+    </div>
+  `;
+  document.body.appendChild(banner);
+  document.getElementById('swUpdateBtn').onclick = () => {
+    worker.postMessage({ type: 'SKIP_WAITING' });
+    banner.remove();
+  };
+  document.getElementById('swUpdateLaterBtn').onclick = () => banner.remove();
+}
+// ===== PATCH 3 END =====
 
 // PWA — Install prompt (Android)
 let deferredPrompt = null;
